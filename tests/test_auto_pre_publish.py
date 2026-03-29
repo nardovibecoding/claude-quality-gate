@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Nardo (nardovibecoding). AGPL-3.0 — see LICENSE
 """Tests for auto_pre_publish.py — stdlib unittest only."""
 import sys
 import json
