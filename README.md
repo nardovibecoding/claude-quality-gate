@@ -55,6 +55,42 @@ Or manually — clone and add to `~/.claude/settings.json`:
 
 ---
 
+## Hook Dispatcher System
+
+For high-frequency sessions, the dispatcher system reduces latency by ~75% and spawns ~79% fewer processes per tool call.
+
+**Architecture:**
+
+| File | Role |
+|------|------|
+| `hook_daemon.py` | Background process — pre-loads all hook modules into memory, listens on a Unix socket (`/tmp/claude_hook_daemon.sock`) |
+| `hook_client.sh` | Lightweight caller — sends events to the daemon via `nc`, falls back to direct dispatcher if daemon is not running |
+| `dispatcher_pre.py` | Routes PreToolUse events to the correct hooks based on `tool_name` |
+| `dispatcher_post.py` | Routes PostToolUse events to the correct hooks based on `tool_name` |
+
+**How it works:**
+
+Without the dispatcher, Claude Code spawns a new `python3` process for every hook on every tool call. With the dispatcher, one Python process handles all routing in-process, and the daemon eliminates startup cost entirely by keeping modules loaded.
+
+**Usage:**
+
+```bash
+# Start the daemon (once per session)
+python3 hook_daemon.py &
+
+# Use hook_client.sh as your hook command in settings.json
+# PreToolUse:  echo $event | hook_client.sh pre
+# PostToolUse: echo $event | hook_client.sh post
+```
+
+The daemon auto-detects pre vs post based on the `_event` field. If the daemon is down, `hook_client.sh` falls back to the Python dispatchers transparently.
+
+**Customizing routing:**
+
+Edit the `ROUTING` dict in `dispatcher_pre.py` / `dispatcher_post.py` (or `PRE_ROUTING` / `POST_ROUTING` in `hook_daemon.py`) to map tool names to your hook scripts.
+
+---
+
 ## Related
 
 - [claude-sec-ops-guard](https://github.com/nardovibecoding/claude-sec-ops-guard) — 27 hooks + 28 MCP tools for security enforcement and ops automation
