@@ -5,12 +5,11 @@
 
 SOCK="/tmp/claude_hook_daemon.sock"
 EVENT_TYPE="${1:-pre}"
-HOOKS_DIR="${HOOKS_DIR:-$(dirname "$0")}"
 
 input=$(cat)
 [ -z "$input" ] && echo '{}' && exit 0
 
-# Try daemon (inject _event key — no python3 needed)
+# Try daemon (inject _event key with sed — no python3 needed)
 if [ -S "$SOCK" ]; then
     payload="{\"_event\":\"${EVENT_TYPE}\",\"_data\":${input}}"
     result=$(printf '%s' "$payload" | nc -U "$SOCK" -w 2 2>/dev/null)
@@ -22,7 +21,7 @@ fi
 
 # Fallback to dispatcher
 if [ "$EVENT_TYPE" = "pre" ]; then
-    echo "$input" | python3 "${HOOKS_DIR}/dispatcher_pre.py"
+    echo "$input" | python3 /Users/bernard/.claude/hooks/dispatcher_pre.py
 else
-    echo "$input" | python3 "${HOOKS_DIR}/dispatcher_post.py"
+    echo "$input" | python3 /Users/bernard/.claude/hooks/dispatcher_post.py
 fi

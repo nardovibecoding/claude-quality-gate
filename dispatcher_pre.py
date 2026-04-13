@@ -38,6 +38,9 @@ ROUTING = {
     "Skill": [
         "skill_enable_hook.py",
     ],
+    "mcp__plugin_telegram_telegram__reply": [
+        "tg_qr_document.py",
+    ],
 }
 
 # Hooks that check tool_input content, not just tool_name — run on specific tools only

@@ -16,26 +16,39 @@ ROUTING = {
     "Edit": [
         "file_unlock.py", "auto_pip_install.py", "auto_memory_index.py",
         "auto_skill_sync.py", "auto_bot_restart.py", "auto_dependency_grep.py",
-        "reasoning_leak_canary.py",
-        # Quality guards
-        "async_safety_guard.py", "hardcoded_model_guard.py",
-        "resource_leak_guard.py", "temp_file_guard.py",
-        "auto_test_after_edit.py",
+        "reddit_api_block.py", "mcp_server_restart.py", "reasoning_leak_canary.py",
+        # Global guards (Tier 2)
+        "admin_only_guard.py", "async_safety_guard.py", "hardcoded_model_guard.py",
+        "resource_leak_guard.py", "temp_file_guard.py", "tg_api_guard.py",
+        "tg_security_guard.py", "auto_hook_commit.py", "auto_test_after_edit.py",
     ],
     "Write": [
         "file_unlock.py", "auto_memory_index.py", "auto_copyright_header.py",
-        "auto_dependency_grep.py",
-        # Quality guards
-        "async_safety_guard.py", "hardcoded_model_guard.py",
-        "resource_leak_guard.py", "temp_file_guard.py",
-        "auto_test_after_edit.py",
+        "auto_dependency_grep.py", "gmail_humanizer.py",
+        # Global guards (Tier 2)
+        "admin_only_guard.py", "async_safety_guard.py", "hardcoded_model_guard.py",
+        "resource_leak_guard.py", "temp_file_guard.py", "tg_api_guard.py",
+        "tg_security_guard.py", "auto_hook_commit.py", "auto_test_after_edit.py",
     ],
     "Bash": [
-        "auto_dependency_grep.py", "auto_restart_process.py",
-        "pre_commit_validate.py",
+        "auto_vps_sync.py", "auto_license.py", "auto_repo_check.py",
+        "auto_dependency_grep.py", "auto_restart_process.py", "verify_infra.py",
+        "revert_memory_chain.py", "pre_commit_validate.py",
     ],
     "Read": [
         "memory_access_tracker.py", "memory_conflict_guard.py",
+    ],
+    "Skill": [
+        "skill_disable_hook.py",
+    ],
+    "mcp__claude_ai_Gmail__gmail_create_draft": [
+        "gmail_humanizer.py",
+    ],
+    "mcp__plugin_telegram_telegram__reply": [
+        "gmail_humanizer.py",
+    ],
+    "mcp__plugin_telegram_telegram__edit_message": [
+        "gmail_humanizer.py",
     ],
 }
 
