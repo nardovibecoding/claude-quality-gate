@@ -36,6 +36,9 @@ def snapshot(repo: Path) -> str | None:
         return None
     # Stage tracked changes only (avoid accidental new file commits like .env)
     run(["git", "add", "-u"], cwd=repo)
+    # Pull remote first (rebase + autostash configured per-repo) to prevent divergence.
+    # Stop hook never pushes — just keeps local branch in sync with origin before committing.
+    run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=repo)
     # Amend guard: verify something is actually staged
     diff_cached = run(["git", "diff", "--cached", "--name-only"], cwd=repo)
     if not diff_cached.stdout.strip():
@@ -62,4 +65,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent))
+    from _safe_hook import safe_run
+    safe_run(main, "project_dirty_snapshot")

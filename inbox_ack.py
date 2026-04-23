@@ -33,6 +33,9 @@ import shutil
 import sys
 from datetime import datetime, timezone, timedelta
 
+sys.path.insert(0, os.path.dirname(__file__))
+from telemetry import log_fire, log_fire_done
+
 INBOX_ROOT = os.path.expanduser("~/inbox")
 APPROVALS_DIR = os.path.join(INBOX_ROOT, "_approvals")
 ARCHIVE_DIR = os.path.join(INBOX_ROOT, "archive")
@@ -276,97 +279,111 @@ def _resolve_code_to_action(brief, code):
 
 
 def main():
-    # Read stdin JSON (UserPromptSubmit payload)
+    _t0 = log_fire(__file__)
     try:
-        payload = json.load(sys.stdin)
-    except Exception:
-        print(json.dumps({}))
-        return
-
-    prompt = payload.get("prompt", "")
-    if not prompt:
-        print(json.dumps({}))
-        return
-
-    parsed = _parse_prompt(prompt)
-
-    if parsed is None:
-        # Not an ack — pass through silently
-        print(json.dumps({}))
-        return
-
-    # Load briefs
-    all_briefs = _load_all_briefs()
-
-    # Resolve target brief(s)
-    if parsed["brief_id"]:
-        # Scoped to a specific brief
-        brief_path, brief = _load_brief_by_id(parsed["brief_id"])
-        if brief is None:
-            print(f"[inbox_ack] WARN: brief_id '{parsed['brief_id']}' not found", file=sys.stderr)
+        # Read stdin JSON (UserPromptSubmit payload)
+        try:
+            payload = json.load(sys.stdin)
+        except Exception:
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
             print(json.dumps({}))
             return
-        targets = [(brief_path, brief)]
-    elif parsed["all_flag"]:
-        targets = all_briefs
-    else:
-        # Apply to oldest brief (critical > daily > weekly)
-        oldest_path, oldest = _oldest_brief(all_briefs)
-        if oldest is None:
+
+        prompt = payload.get("prompt", "")
+        if not prompt:
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
             print(json.dumps({}))
             return
-        targets = [(oldest_path, oldest)]
 
-    prompt_snippet = prompt[:200]
-    acked = []
+        parsed = _parse_prompt(prompt)
 
-    for brief_path, brief in targets:
-        # Determine which code to apply
-        codes = parsed["codes"]
+        if parsed is None:
+            # Not an ack — pass through silently
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
+            print(json.dumps({}))
+            return
 
-        if not codes:
-            # "all" with no digit code: apply first action code for each brief
-            first_action = brief["actions"][0] if brief["actions"] else None
-            if first_action:
-                codes = [first_action["code"]]
+        # Load briefs
+        all_briefs = _load_all_briefs()
 
-        for code in codes:
-            action = _resolve_code_to_action(brief, code)
-            if action is None:
-                # Normalize word codes to digit if possible
-                # (e.g. "approve" might map to action code "1" in the brief)
-                # Try matching label keywords
-                word_to_try = None
-                if code == "approve":
-                    word_to_try = "1"
-                elif code == "defer":
-                    word_to_try = "2"
-                elif code == "skip":
-                    word_to_try = "3"
-                if word_to_try:
-                    action = _resolve_code_to_action(brief, word_to_try)
+        # Resolve target brief(s)
+        if parsed["brief_id"]:
+            # Scoped to a specific brief
+            brief_path, brief = _load_brief_by_id(parsed["brief_id"])
+            if brief is None:
+                print(f"[inbox_ack] WARN: brief_id '{parsed['brief_id']}' not found", file=sys.stderr)
+                log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
+                print(json.dumps({}))
+                return
+            targets = [(brief_path, brief)]
+        elif parsed["all_flag"]:
+            targets = all_briefs
+        else:
+            # Apply to oldest brief (critical > daily > weekly)
+            oldest_path, oldest = _oldest_brief(all_briefs)
+            if oldest is None:
+                log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
+                print(json.dumps({}))
+                return
+            targets = [(oldest_path, oldest)]
 
-            if action is None:
-                print(f"[inbox_ack] WARN: unrecognized code '{code}' for brief '{brief['id']}'", file=sys.stderr)
-                continue
+        prompt_snippet = prompt[:200]
+        acked = []
 
-            ok = _write_approval(brief, action["code"], prompt_snippet)
-            if ok:
-                _archive_brief(brief_path)
-                acked.append({"brief_id": brief["id"], "code": action["code"], "label": action["label"]})
-                # Only one code per brief (first match wins)
-                break
+        for brief_path, brief in targets:
+            # Determine which code to apply
+            codes = parsed["codes"]
 
-    if acked:
-        # Inject context so Claude sees the ack result
-        lines = ["<inbox-ack>"]
-        lines.append(f"Acknowledged {len(acked)} brief(s):")
-        for a in acked:
-            lines.append(f"  [{a['code']}] {a['brief_id']} — {a['label']}")
-        lines.append("</inbox-ack>")
-        context = "\n".join(lines)
-        print(json.dumps({"additionalContext": context}))
-    else:
+            if not codes:
+                # "all" with no digit code: apply first action code for each brief
+                first_action = brief["actions"][0] if brief["actions"] else None
+                if first_action:
+                    codes = [first_action["code"]]
+
+            for code in codes:
+                action = _resolve_code_to_action(brief, code)
+                if action is None:
+                    # Normalize word codes to digit if possible
+                    # (e.g. "approve" might map to action code "1" in the brief)
+                    # Try matching label keywords
+                    word_to_try = None
+                    if code == "approve":
+                        word_to_try = "1"
+                    elif code == "defer":
+                        word_to_try = "2"
+                    elif code == "skip":
+                        word_to_try = "3"
+                    if word_to_try:
+                        action = _resolve_code_to_action(brief, word_to_try)
+
+                if action is None:
+                    print(f"[inbox_ack] WARN: unrecognized code '{code}' for brief '{brief['id']}'", file=sys.stderr)
+                    continue
+
+                ok = _write_approval(brief, action["code"], prompt_snippet)
+                if ok:
+                    _archive_brief(brief_path)
+                    acked.append({"brief_id": brief["id"], "code": action["code"], "label": action["label"]})
+                    # Only one code per brief (first match wins)
+                    break
+
+        if acked:
+            # Inject context so Claude sees the ack result
+            lines = ["<inbox-ack>"]
+            lines.append(f"Acknowledged {len(acked)} brief(s):")
+            for a in acked:
+                lines.append(f"  [{a['code']}] {a['brief_id']} — {a['label']}")
+            lines.append("</inbox-ack>")
+            context = "\n".join(lines)
+            out = json.dumps({"additionalContext": context})
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=len(out))
+            print(out)
+        else:
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
+            print(json.dumps({}))
+    except Exception as e:
+        log_fire_done(__file__, _t0, errored=True, output_size_bytes=0)
+        print(f"[inbox_ack] error: {e}", file=sys.stderr)
         print(json.dumps({}))
 
 

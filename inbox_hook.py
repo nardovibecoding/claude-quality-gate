@@ -17,6 +17,9 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 
+sys.path.insert(0, os.path.dirname(__file__))
+from telemetry import log_fire, log_fire_done
+
 INBOX_ROOT = os.path.expanduser("~/inbox")
 SCHEMA_REQUIRED = ["id", "tier", "source_daemon", "host", "title", "body", "created", "actions"]
 ACTION_REQUIRED = ["code", "label", "command"]
@@ -85,47 +88,56 @@ def _format_brief(brief, idx):
 
 
 def main():
-    # Consume stdin (required for hook protocol; ignore content for this hook)
+    _t0 = log_fire(__file__)
     try:
-        json.load(sys.stdin)
-    except Exception:
-        pass
+        # Consume stdin (required for hook protocol; ignore content for this hook)
+        try:
+            json.load(sys.stdin)
+        except Exception:
+            pass
 
-    now = _hkt_now()
+        now = _hkt_now()
 
-    all_briefs = []
+        all_briefs = []
 
-    # Always: critical
-    all_briefs.extend(_load_briefs("critical"))
+        # Always: critical
+        all_briefs.extend(_load_briefs("critical"))
 
-    # Daily window: 10:00-12:00 HKT
-    if _in_daily_window(now):
-        all_briefs.extend(_load_briefs("daily"))
+        # Daily window: 10:00-12:00 HKT
+        if _in_daily_window(now):
+            all_briefs.extend(_load_briefs("daily"))
 
-    # Weekly window: Sunday 20:00-22:00 HKT
-    if _in_weekly_window(now):
-        all_briefs.extend(_load_briefs("weekly"))
+        # Weekly window: Sunday 20:00-22:00 HKT
+        if _in_weekly_window(now):
+            all_briefs.extend(_load_briefs("weekly"))
 
-    if not all_briefs:
-        print(json.dumps({}))
-        return
+        if not all_briefs:
+            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
+            print(json.dumps({}))
+            return
 
-    lines = [
-        "<inbox-briefs>",
-        "[System note: Big SystemD inbox briefs — pending items for Bernard's approval. "
-        "Each brief has reply codes; Bernard types e.g. '1' to approve, '2' to defer, '3' to skip.]",
-        "",
-        f"Pending briefs ({len(all_briefs)}):",
-    ]
-    for i, brief in enumerate(all_briefs, 1):
+        lines = [
+            "<inbox-briefs>",
+            "[System note: Big SystemD inbox briefs — pending items for Bernard's approval. "
+            "Each brief has reply codes; Bernard types e.g. '1' to approve, '2' to defer, '3' to skip.]",
+            "",
+            f"Pending briefs ({len(all_briefs)}):",
+        ]
+        for i, brief in enumerate(all_briefs, 1):
+            lines.append("")
+            lines.append(_format_brief(brief, i))
+
         lines.append("")
-        lines.append(_format_brief(brief, i))
+        lines.append("</inbox-briefs>")
 
-    lines.append("")
-    lines.append("</inbox-briefs>")
-
-    context = "\n".join(lines)
-    print(json.dumps({"additionalContext": context}))
+        context = "\n".join(lines)
+        out = json.dumps({"additionalContext": context})
+        log_fire_done(__file__, _t0, errored=False, output_size_bytes=len(out))
+        print(out)
+    except Exception as e:
+        log_fire_done(__file__, _t0, errored=True, output_size_bytes=0)
+        print(f"[inbox_hook] error: {e}", file=sys.stderr)
+        print(json.dumps({}))
 
 
 if __name__ == "__main__":

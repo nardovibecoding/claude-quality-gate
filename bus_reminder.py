@@ -10,6 +10,9 @@ import os
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(__file__))
+from telemetry import log_fire, log_fire_done
+
 MARKER = os.path.expanduser("~/.cache/claude_bus_active.json")
 REGISTRY = "/tmp/claude_bus_registry.jsonl"
 MAX_AGE_SEC = 3600
@@ -37,25 +40,38 @@ def _peers(my_name):
 
 
 def main():
-    if not os.path.exists(MARKER):
-        sys.exit(0)
+    _t0 = log_fire(__file__)
+    _errored = False
     try:
-        with open(MARKER) as f:
-            m = json.load(f)
-    except (OSError, json.JSONDecodeError):
+        if not os.path.exists(MARKER):
+            sys.exit(0)
+        try:
+            with open(MARKER) as f:
+                m = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            sys.exit(0)
+        joined_ts = m.get("joined_ts", 0)
+        if time.time() - joined_ts > MAX_AGE_SEC:
+            sys.exit(0)
+        name = m.get("name", "?")
+        peers = _peers(name)
+        peer_str = ", ".join(peers) if peers else "none (alone)"
+        ctx = (
+            f"📡 /bus ACTIVE as {name}. Peers: {peer_str}. "
+            f"Auto-announce on: milestone shipped, Agent completion, pivot, "
+            f"blocker, starting work on shared surface. Use `jq ... >> /tmp/claude_bus.jsonl`."
+        )
+        out = json.dumps({"additionalContext": ctx})
+        log_fire_done(__file__, _t0, errored=False, output_size_bytes=len(out))
+        print(out)
+    except SystemExit:
+        log_fire_done(__file__, _t0, errored=False, output_size_bytes=0)
+        raise
+    except Exception as e:
+        _errored = True
+        log_fire_done(__file__, _t0, errored=True, output_size_bytes=0)
+        print(f"[bus_reminder] error: {e}", file=sys.stderr)
         sys.exit(0)
-    joined_ts = m.get("joined_ts", 0)
-    if time.time() - joined_ts > MAX_AGE_SEC:
-        sys.exit(0)
-    name = m.get("name", "?")
-    peers = _peers(name)
-    peer_str = ", ".join(peers) if peers else "none (alone)"
-    ctx = (
-        f"📡 /bus ACTIVE as {name}. Peers: {peer_str}. "
-        f"Auto-announce on: milestone shipped, Agent completion, pivot, "
-        f"blocker, starting work on shared surface. Use `jq ... >> /tmp/claude_bus.jsonl`."
-    )
-    print(json.dumps({"additionalContext": ctx}))
 
 
 if __name__ == "__main__":

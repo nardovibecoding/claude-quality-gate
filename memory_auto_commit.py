@@ -39,16 +39,23 @@ def main():
         print("{}")
         return
 
-    result = run(["rsync", "-az", "--delete",
-                  str(MEMORY_SRC) + "/",
-                  VPS_TARGET])
-
-    if result.returncode == 0:
-        STAMP.touch()
-        print(json.dumps({"systemMessage": "Memory rsynced to VPS."}))
-    else:
-        print("{}")
+    # Fire-and-forget: SSH to Hel can take 30-60s via VPN, don't block session stop
+    LOG = Path("/tmp/memory_auto_commit.log")
+    with open(LOG, "a") as f:
+        subprocess.Popen(
+            ["rsync", "-az", "--delete",
+             "-e", "ssh -o ConnectTimeout=10 -o ServerAliveInterval=15",
+             str(MEMORY_SRC) + "/", VPS_TARGET],
+            stdout=f, stderr=f,
+            start_new_session=True,
+        )
+    STAMP.touch()
+    print(json.dumps({"systemMessage": "Memory rsync started (bg)."}))
 
 
 if __name__ == "__main__":
-    main()
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent))
+    from _safe_hook import safe_run
+    safe_run(main, "memory_auto_commit")
