@@ -87,6 +87,10 @@ def load_and_run(script_name, event_data):
     return None
 
 
+SHADOW_MODE = True  # 2026-04-23: activate as logger-only until cutover. Flip to False after verification.
+SHADOW_LOG = Path("/tmp/dispatcher_shadow.log")
+
+
 def main():
     try:
         event = json.load(sys.stdin)
@@ -105,6 +109,22 @@ def main():
     for script, tools in TOOL_INPUT_HOOKS.items():
         if tool_name in tools:
             hooks_to_run.append(script)
+
+    if SHADOW_MODE:
+        # Log routing decision, do nothing else. Existing per-matcher registrations keep firing.
+        import time as _t
+        try:
+            with SHADOW_LOG.open("a") as f:
+                f.write(json.dumps({
+                    "ts": int(_t.time()),
+                    "tool_name": tool_name,
+                    "would_route": hooks_to_run,
+                    "file_path": event.get("tool_input", {}).get("file_path", ""),
+                }) + "\n")
+        except Exception:
+            pass
+        print("{}")
+        return
 
     if not hooks_to_run:
         print("{}")

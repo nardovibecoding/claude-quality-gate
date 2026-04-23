@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "last_rebuilt_ts": 1776941398,
+  "last_rebuilt_ts": 1776957772,
   "buckets": {
     "scope-and-proceed": {
       "description": "Scope/plan a phase or task, then proceed",
@@ -28,8 +28,8 @@
         "systemctl",
         "pkill"
       ],
-      "accept_count": 22,
-      "total_count": 22
+      "accept_count": 23,
+      "total_count": 23
     },
     "commit-only": {
       "description": "git commit local changes (no push)",
@@ -101,8 +101,8 @@
         "lesson",
         "rollup"
       ],
-      "accept_count": 0,
-      "total_count": 0
+      "accept_count": 1,
+      "total_count": 1
     },
     "skill-invoke": {
       "description": "Invoke an existing skill (/ship, /bus, /s)",

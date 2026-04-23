@@ -74,22 +74,27 @@ if [ -d "$PM_DIR/.git" ]; then
   fi
 fi
 
-# ─── 2. Memory (rsync) ───────────────────────────────────────────────
-MEMORY_DIR="$HOME/.claude/projects/-Users-bernard/memory/"
-if [ -d "$MEMORY_DIR" ]; then
-  rsync -az --delete --exclude='.git' \
-    "$MEMORY_DIR" \
-    "$VPS:~/.claude/projects/-Users-bernard/memory/" \
-    2>/dev/null && log "Memory: synced" || log "Memory: rsync failed"
+# ─── 2. Memory (git push/pull to self-hosted bare repo, migrated 2026-04-23) ───
+MEMORY_DIR="$HOME/.claude/projects/-Users-bernard/memory"
+if [ -d "$MEMORY_DIR/.git" ]; then
+  # pull remote changes (VPS writes), then commit+push local
+  (cd "$MEMORY_DIR" && \
+    git pull --rebase origin main 2>/dev/null ; \
+    git add -A && git commit -m "mac-periodic: $(date +%FT%T)" --allow-empty-message 2>/dev/null ; \
+    git push origin main 2>/dev/null \
+      || (git pull --rebase origin main 2>/dev/null && git push origin main 2>/dev/null)
+  ) && log "Memory: git synced" || log "Memory: git sync failed (see /tmp/memory_auto_commit.log)"
 fi
 
-# ─── 3. NardoWorld wiki (rsync) ──────────────────────────────────────
-WIKI_DIR="$HOME/NardoWorld/"
-if [ -d "$WIKI_DIR" ]; then
-  rsync -az --delete --exclude='.git' --exclude='node_modules' \
-    "$WIKI_DIR" \
-    "$VPS:~/NardoWorld/" \
-    2>/dev/null && log "Wiki: synced" || log "Wiki: rsync failed"
+# ─── 3. NardoWorld wiki (git push/pull to self-hosted bare repo, migrated 2026-04-23) ───
+WIKI_DIR="$HOME/NardoWorld"
+if [ -d "$WIKI_DIR/.git" ]; then
+  (cd "$WIKI_DIR" && \
+    git pull --rebase origin main 2>/dev/null ; \
+    git add -A && git commit -m "mac-periodic: $(date +%FT%T)" --allow-empty-message 2>/dev/null ; \
+    git push origin main 2>/dev/null \
+      || (git pull --rebase origin main 2>/dev/null && git push origin main 2>/dev/null)
+  ) && log "Wiki: git synced" || log "Wiki: git sync failed"
 fi
 
 # ─── 4. Claude scripts (rsync) ───────────────────────────────────────
@@ -99,6 +104,15 @@ if [ -d "$SCRIPTS_DIR" ]; then
     "$SCRIPTS_DIR" \
     "$VPS:~/.claude/scripts/" \
     2>/dev/null && log "Scripts: synced" || log "Scripts: rsync failed"
+fi
+
+# ─── 5. Skills git pull with rebase fallback (fixes ff-only silent abort) ───
+SKILLS_DIR="$HOME/.claude/skills"
+if [ -d "$SKILLS_DIR/.git" ]; then
+  git -C "$SKILLS_DIR" pull --rebase origin main 2>/dev/null \
+    || git -C "$SKILLS_DIR" pull --no-rebase origin main 2>/dev/null \
+    && log "Skills: pulled" \
+    || log "Skills: pull failed — manual resolve needed"
 fi
 
 log "Sync complete"

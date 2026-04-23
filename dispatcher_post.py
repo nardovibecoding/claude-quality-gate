@@ -18,17 +18,17 @@ ROUTING = {
         "auto_skill_sync.py", "auto_bot_restart.py", "auto_dependency_grep.py",
         "reddit_api_block.py", "mcp_server_restart.py", "reasoning_leak_canary.py",
         # Global guards (Tier 2)
-        "admin_only_guard.py", "async_safety_guard.py", "hardcoded_model_guard.py",
-        "resource_leak_guard.py", "temp_file_guard.py", "tg_api_guard.py",
-        "tg_security_guard.py", "auto_hook_commit.py", "auto_test_after_edit.py",
+        "async_safety_guard.py", "hardcoded_model_guard.py",
+        "resource_leak_guard.py", "temp_file_guard.py",
+        "auto_hook_commit.py", "auto_test_after_edit.py",
     ],
     "Write": [
         "file_unlock.py", "auto_memory_index.py", "auto_copyright_header.py",
         "auto_dependency_grep.py", "gmail_humanizer.py",
         # Global guards (Tier 2)
-        "admin_only_guard.py", "async_safety_guard.py", "hardcoded_model_guard.py",
-        "resource_leak_guard.py", "temp_file_guard.py", "tg_api_guard.py",
-        "tg_security_guard.py", "auto_hook_commit.py", "auto_test_after_edit.py",
+        "async_safety_guard.py", "hardcoded_model_guard.py",
+        "resource_leak_guard.py", "temp_file_guard.py",
+        "auto_hook_commit.py", "auto_test_after_edit.py",
     ],
     "Bash": [
         "auto_vps_sync.py", "auto_license.py", "auto_repo_check.py",
