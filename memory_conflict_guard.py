@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from hook_base import _log
 
 HOOK_NAME = "memory_conflict"
-MEMORY_DIR = Path.home() / ".claude" / "projects" / f"-Users-{Path.home().name}" / "memory"
+_HOME = Path.home()
+MEMORY_DIR = _HOME / ".claude" / "projects" / str(_HOME).replace("/", "-") / "memory"
 SNAPSHOT_DIR = Path("/tmp/claude_memory_snapshots")
 STATE_FILE = Path("/tmp/claude_memory_reads.json")
 
@@ -201,7 +202,7 @@ def _handle_post_read(input_data):
         print("{}")
         return
 
-    tty = os.environ.get("CLAUDE_TTY_ID", "default")
+    tty = os.environ.get("CLAUDE_TTY_ID", "").strip() or f"pid_{os.getpid()}"
 
     # Store full content snapshot
     try:
@@ -246,7 +247,7 @@ def _handle_pre_write(input_data):
         print("{}")
         return
 
-    tty = os.environ.get("CLAUDE_TTY_ID", "default")
+    tty = os.environ.get("CLAUDE_TTY_ID", "").strip() or f"pid_{os.getpid()}"
     state = _load_state()
     key = f"{tty}:{file_path}"
 
