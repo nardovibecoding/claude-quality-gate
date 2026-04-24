@@ -250,6 +250,112 @@ def _consume_bundle(bundle_id: str) -> None:
         print(f"[inbox_hook] WARN: consume dispatch failed for {bundle_id}: {e}", file=sys.stderr)
 
 
+def _infer_category(daemon_key: str, title: str) -> str:
+    """
+    Rule-based category inference (no LLM). daemon_key = 'bigd-security@mac' or 'security@mac'.
+    Title-based bug override checked first on title.
+    Returns one of: Bugs, Security, Performance, Hygiene, Drift, Upgrade, Other.
+    """
+    import re
+    title_lower = title.lower()
+    if re.search(r"\b(bug|error|revert|broken)\b", title_lower):
+        return "Bugs"
+    # Normalise daemon_key: strip host suffix if present
+    daemon_part = daemon_key.split("@")[0]  # e.g. "security" or "bigd-security"
+    daemon_part = daemon_part.replace("bigd-", "")  # normalise to bare name
+    mapping = {
+        "security":    "Security",
+        "performance": "Performance",
+        "lint":        "Hygiene",
+        "gaps":        "Drift",
+        "upgrade":     "Upgrade",
+    }
+    return mapping.get(daemon_part, "Other")
+
+
+# Category display order and emoji labels
+_CATEGORY_EMOJI = {
+    "Bugs":        "🐛 Bugs",
+    "Security":    "🔒 Security",
+    "Performance": "⚡ Performance",
+    "Hygiene":     "🧹 Hygiene",
+    "Drift":       "♻️ Drift",
+    "Upgrade":     "🔧 Upgrade",
+    "Other":       "📌 Other",
+}
+_CATEGORY_ORDER = ["Bugs", "Security", "Performance", "Hygiene", "Drift", "Upgrade", "Other"]
+
+
+def _format_bundle_digest(bundle: dict) -> str:
+    """
+    Build human-readable approval queue grouped by category with numbered action codes.
+    Includes directive telling Claude to present the queue to user.
+    """
+    date_str   = bundle.get("date", "?")
+    summaries  = bundle.get("summaries", {})
+
+    # Collect all proposed_actions across all daemon@host keys with global numbering
+    # Each entry: (global_num, daemon_key, pa_dict, category)
+    all_actions: list[tuple[int, str, dict, str]] = []
+    num = 1
+    for daemon_key, s in summaries.items():
+        for pa in s.get("proposed_actions", []):
+            title = pa.get("title", "")
+            category = _infer_category(daemon_key, title)
+            all_actions.append((num, daemon_key, pa, category))
+            num += 1
+
+    total_actions = len(all_actions)
+    total_findings = sum(
+        len(s.get("proposed_actions", [])) for s in summaries.values()
+    )
+    daemon_count = len(summaries)
+
+    # Group by category
+    by_category: dict[str, list[tuple[int, str, dict]]] = {c: [] for c in _CATEGORY_ORDER}
+    for n, dk, pa, cat in all_actions:
+        by_category[cat].append((n, dk, pa))
+
+    directive = (
+        "[DIRECTIVE to Claude: On next response, present the approval queue below to user. "
+        "Ask them to reply with action numbers, 'approve all', or 'defer all'.]"
+    )
+
+    lines = [
+        "<bigd-daily-bundle>",
+        directive,
+        "",
+        f"## \U0001f4ec Daily BigD Report {date_str}",
+        f"{total_findings} findings, {total_actions} actions across {daemon_count} daemons.",
+        "",
+    ]
+
+    for cat in _CATEGORY_ORDER:
+        entries = by_category.get(cat, [])
+        if not entries:
+            continue
+        label = _CATEGORY_EMOJI.get(cat, cat)
+        lines.append(f"### {label} ({len(entries)} actions)")
+        for n, dk, pa in entries:
+            risk  = pa.get("risk", "?")
+            title = pa.get("title", "?")
+            pa_id = pa.get("id", "?")
+            lines.append(f"{n}. [risk={risk}] {title}  (id: {pa_id})")
+        lines.append("")
+
+    lines += [
+        "## Action codes to reply with:",
+        "- `1 2 5` — approve selected",
+        "- `approve all` — approve every action",
+        "- `defer all` — mark for tomorrow",
+        "- `skip` — no action",
+        "- `1-5 defer` — defer range",
+        "</bigd-daily-bundle>",
+    ]
+
+    return "\n".join(lines)
+
+
 def _format_bundle(bundle: dict) -> str:
     """
     Render bundle as human-readable additionalContext block.
@@ -396,7 +502,13 @@ def main():
                 bundle_id = None  # fall through to legacy path
 
             if bundle_id is not None:
-                context = bundle_text
+                # Build category-grouped approval queue digest (FP-9/10)
+                try:
+                    digest_text = _format_bundle_digest(bundle)
+                except Exception as de:
+                    print(f"[inbox_hook] WARN: digest format failed ({de}), using raw bundle", file=sys.stderr)
+                    digest_text = bundle_text
+                context = digest_text
                 out = json.dumps({"additionalContext": context})
 
                 # Consume: move ready -> consumed (graceful fail)
