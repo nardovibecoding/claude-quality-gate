@@ -182,7 +182,13 @@ def _format_brief(brief, idx):
         "  Actions:",
     ]
     for action in brief["actions"]:
-        lines.append(f"    [{action['code']}] {action['label']}")
+        cmd = action.get("command", "").strip()
+        if cmd:
+            cmd_preview = cmd[:100] + ("..." if len(cmd) > 100 else "")
+            lines.append(f"    [{action['code']}] {action['label']}")
+            lines.append(f"         cmd: {cmd_preview}")
+        else:
+            lines.append(f"    [{action['code']}] {action['label']}  (noop: archive-only)")
     # Show recurrence if > 1
     rc = brief.get("recurrence_count", 1)
     if rc > 1:
@@ -316,9 +322,14 @@ def _format_bundle_digest(bundle: dict) -> str:
     for n, dk, pa, cat in all_actions:
         by_category[cat].append((n, dk, pa))
 
+    bundle_id = bundle.get("bundle_id", "")
     directive = (
         "[DIRECTIVE to Claude: On next response, present the approval queue below to user. "
-        "Ask them to reply with action numbers, 'approve all', or 'defer all'.]"
+        "Ask them to reply with action numbers, 'approve all', or 'defer all'. "
+        f"IMPORTANT: Before presenting the queue, emit a verdict JSON for bundle_id={bundle_id!r} "
+        "via bigd._lib.verdict.write_verdict() -- call write_verdict(bundle_id, decisions) where "
+        "decisions maps each action id to APPROVED/DEFERRED/SKIPPED based on user input. "
+        "Present each escalated action as a numbered approval item to Bernard.]"
     )
 
     lines = [
@@ -337,10 +348,21 @@ def _format_bundle_digest(bundle: dict) -> str:
         label = _CATEGORY_EMOJI.get(cat, cat)
         lines.append(f"### {label} ({len(entries)} actions)")
         for n, dk, pa in entries:
-            risk  = pa.get("risk", "?")
-            title = pa.get("title", "?")
-            pa_id = pa.get("id", "?")
+            risk    = pa.get("risk", "?")
+            title   = pa.get("title", "?")
+            pa_id   = pa.get("id", "?")
+            # Phase 3: show concrete command text under each action
+            actions_list = pa.get("actions", [])
+            cmd_parts: list[str] = []
+            for act in actions_list:
+                cmd = (act.get("command") or "").strip()
+                if cmd:
+                    cmd_parts.append(f"[{act.get('code','?')}] {cmd[:100]}")
+                else:
+                    cmd_parts.append(f"[{act.get('code','?')}] (noop: archive-only)")
             lines.append(f"{n}. [risk={risk}] {title}  (id: {pa_id})")
+            for cp in cmd_parts:
+                lines.append(f"       {cp}")
         lines.append("")
 
     lines += [
@@ -526,6 +548,32 @@ def main():
         # PATH B: Legacy injection (critical/+daily/+weekly briefs)
         # Reached when: no bundle in ready/, OR bundle was malformed
         # ------------------------------------------------------------------
+
+        # Force-refresh: scan critical/ for briefs newer than last inject
+        # that are not yet in seen_ids. These bypass session dedup so
+        # genuinely new briefs written after last inject always surface.
+        _critical_dir = os.path.join(INBOX_ROOT, "critical")
+        _force_refresh_count = 0
+        if os.path.isdir(_critical_dir):
+            for _fname in os.listdir(_critical_dir):
+                if not _fname.endswith(".json"):
+                    continue
+                _fpath = os.path.join(_critical_dir, _fname)
+                try:
+                    _mtime = os.path.getmtime(_fpath)
+                except OSError:
+                    continue
+                _brief_id = _fname[:-5]  # strip .json
+                if _mtime > state["inject_ts"] and _brief_id not in state["seen_ids"]:
+                    _force_refresh_count += 1
+            if _force_refresh_count:
+                print(
+                    f"[inbox_hook] force-refresh: {_force_refresh_count} new brief(s) detected by mtime",
+                    file=sys.stderr,
+                )
+                # Reset inject_ts to 0 so the delta filter treats this session as first-inject
+                # for these new briefs; existing seen_ids still suppress already-seen ones.
+                state["inject_ts"] = 0.0
 
         # Collect candidate briefs from qualifying tiers
         candidates: list[tuple[str, dict]] = []

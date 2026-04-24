@@ -426,9 +426,283 @@ def _exec_inbox_archive(finding_id: str, exec_id: str, dry_run: bool) -> dict:
     return {"ok": True, "preview": preview}
 
 
+# ---------------------------------------------------------------------------
+# SSH-back host mapping (Phase 5 cross-host executor)
+# ---------------------------------------------------------------------------
+# Maps host field in brief -> SSH alias. Only hel and london need SSH.
+_SSH_ALIAS_MAP: dict[str, str] = {
+    "hel":    "hel",
+    "london": "pm-london",
+}
+
+# Action types that must run on the origin host (not a local plan-write or no_op).
+_REMOTE_ACTION_TYPES = {
+    "file_delete",
+    "file_edit",
+    "plist_reload",      # systemd equivalent on VPS = systemd_reload
+    "systemd_reload",
+    "launchd_enable",
+    "launchd_disable",
+    "memory_cleanup",
+    "disk_cleanup",
+}
+
+
+def _ssh_exec_action(ssh_alias: str, brief_id: str, action_type: str,
+                     action_params: dict, command: str,
+                     exec_id: str, dry_run: bool) -> dict:
+    """
+    SSH to origin host and execute an allowlisted action directly.
+
+    Security:
+    - Only SSHes to known aliases in _SSH_ALIAS_MAP.
+    - Only action_types in _REMOTE_ACTION_TYPES are dispatched remotely.
+    - Each action_type maps to a bounded, pre-approved remote command.
+    - NO free-text shell exec: action_params values are validated before use.
+    - Unit names validated against SYSTEMD_UNIT_RE before use in ssh command.
+    """
+    if action_type not in _REMOTE_ACTION_TYPES:
+        return {"ok": False, "reason": f"ssh_exec: action_type {action_type!r} not in REMOTE_ACTION_TYPES"}
+
+    if ssh_alias not in _SSH_ALIAS_MAP.values():
+        return {"ok": False, "reason": f"ssh_exec: alias {ssh_alias!r} not in allowed SSH aliases"}
+
+    # Build the remote command for each action type.
+    # All commands are hardcoded patterns -- no user-controlled string interpolation.
+    remote_cmd: str | None = None
+
+    if action_type == "systemd_reload":
+        unit = action_params.get("unit", action_params.get("label", ""))
+        if not SYSTEMD_UNIT_RE.match(unit):
+            return {"ok": False, "reason": f"ssh_exec systemd_reload: invalid unit {unit!r}"}
+        if dry_run:
+            remote_cmd = f"systemctl is-active {unit} && echo DRY-RUN-OK"
+        else:
+            remote_cmd = f"systemctl restart {unit} && echo restarted"
+
+    elif action_type == "disk_cleanup":
+        # Bounded: only /tmp, files older than 7 days
+        if dry_run:
+            remote_cmd = "find /tmp -maxdepth 1 -type f -mtime +7 | wc -l"
+        else:
+            remote_cmd = "find /tmp -maxdepth 1 -type f -mtime +7 -delete && echo cleanup-done"
+
+    elif action_type == "memory_cleanup":
+        # Linux: drop_caches = 1 (page cache)
+        if dry_run:
+            remote_cmd = "free -h && echo DRY-RUN-OK"
+        else:
+            remote_cmd = "sync && echo 1 > /proc/sys/vm/drop_caches && echo caches-dropped"
+
+    elif action_type in ("file_delete", "file_edit",
+                         "plist_reload", "launchd_enable", "launchd_disable"):
+        # These action types don't make sense on a linux VPS.
+        # file_delete/file_edit require validated paths -- defer to plan-write instead.
+        return {
+            "ok": False,
+            "reason": (
+                f"ssh_exec: action_type {action_type!r} on VPS ({ssh_alias}) requires manual review. "
+                f"Use cred_rotate_plan or git_filter_repo_plan for destructive file ops."
+            ),
+        }
+    else:
+        return {"ok": False, "reason": f"ssh_exec: no remote command mapping for {action_type!r}"}
+
+    preview = f"ssh_exec [{ssh_alias}]: {action_type} for {brief_id}"
+    _log(f"  SSH dispatch: {ssh_alias} -> {remote_cmd[:80]}")
+
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes",
+             ssh_alias, remote_cmd],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            return {
+                "ok":    True,
+                "preview": preview,
+                "remote_stdout": result.stdout.strip()[:500],
+            }
+        else:
+            return {
+                "ok": False,
+                "reason": f"ssh_exec: rc={result.returncode}: {result.stderr[:200]}",
+                "remote_stdout": result.stdout[:200],
+            }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": f"ssh_exec: timeout waiting for {ssh_alias}"}
+    except Exception as e:
+        return {"ok": False, "reason": f"ssh_exec: exception: {e}"}
+
+
 def _exec_no_op(brief_id: str, code: str, exec_id: str, dry_run: bool) -> dict:
     """Defer/skip -- record in audit log, no action taken."""
     return {"ok": True, "preview": f"no_op: code={code} for {brief_id} -- no action taken"}
+
+
+def _exec_file_map_update(note: str, exec_id: str, dry_run: bool) -> dict:
+    """
+    Append a missing path note to the PM bot file-map.md.
+    note: plain text entry to append (no shell expansion).
+    Bounded: only appends, never deletes. <2KB per note.
+    """
+    # V1: note must be non-empty and <= 500 chars
+    note = note.strip()
+    if not note:
+        return {"ok": False, "reason": "file_map_update: note is empty"}
+    if len(note) > 500:
+        return {"ok": False, "reason": f"file_map_update: note too long ({len(note)} chars, max 500)"}
+
+    file_map = HOME / "NardoWorld" / "projects" / "prediction-markets" / "file-map.md"
+    if not file_map.exists():
+        return {"ok": False, "reason": f"file_map_update: file-map.md not found at {file_map}"}
+
+    preview = f"file_map_update: append note to {file_map.name}"
+    if dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview, "note_preview": note[:100]}
+
+    # V1: backup
+    rollback_dir = ROLLBACK_ROOT / exec_id / "original"
+    rollback_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(file_map, rollback_dir / file_map.name)
+
+    now_iso = _now_utc()
+    append_block = f"\n\n<!-- file_map_update appended by approval_executor at {now_iso} -->\n{note}\n"
+    with open(file_map, "a", encoding="utf-8") as f:
+        f.write(append_block)
+
+    return {"ok": True, "preview": preview, "chars_appended": len(append_block)}
+
+
+def _exec_memory_cleanup(exec_id: str, dry_run: bool) -> dict:
+    """
+    Run `sudo purge` on mac to free inactive memory.
+    Guard: only runs on darwin. No-ops elsewhere.
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return {"ok": False, "reason": "memory_cleanup: not on Darwin -- skipped"}
+
+    preview = "memory_cleanup: sudo purge"
+    if dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview}
+
+    result = subprocess.run(
+        ["sudo", "purge"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        return {"ok": False, "reason": f"sudo purge failed (rc={result.returncode}): {result.stderr[:200]}"}
+    return {"ok": True, "preview": preview, "stdout": result.stdout.strip()}
+
+
+def _exec_disk_cleanup(exec_id: str, dry_run: bool) -> dict:
+    """
+    Delete /tmp files older than 7 days.
+    Bounded: only /tmp, never $HOME or NardoWorld.
+    """
+    import platform
+    import time as _time
+
+    cutoff = _time.time() - 7 * 86400
+    preview = "disk_cleanup: rm /tmp files >7d old"
+
+    tmp_dir = Path("/tmp")
+    to_delete: list[Path] = []
+    try:
+        for f in tmp_dir.iterdir():
+            if f.is_file() and not f.is_symlink():
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        to_delete.append(f)
+                except OSError:
+                    pass
+    except PermissionError as e:
+        return {"ok": False, "reason": f"disk_cleanup: cannot scan /tmp: {e}"}
+
+    if dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview, "would_delete": len(to_delete)}
+
+    deleted = 0
+    errors = 0
+    for f in to_delete:
+        try:
+            f.unlink()
+            deleted += 1
+        except OSError:
+            errors += 1
+
+    return {"ok": True, "preview": preview, "deleted": deleted, "errors": errors}
+
+
+def _exec_git_filter_repo_plan(finding_id: str, exec_id: str, dry_run: bool) -> dict:
+    """
+    Write a git-filter-repo plan file to ~/inbox/_plans/ for user review.
+    NEVER executes git-filter-repo directly. Human eye required.
+    """
+    plans_dir = HOME / "inbox" / "_plans"
+    plan_path = plans_dir / f"git_filter_{finding_id}.sh"
+
+    preview = f"git_filter_repo_plan: write plan to {plan_path}"
+    if dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview}
+
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    plan_content = (
+        f"#!/bin/sh\n"
+        f"# git-filter-repo plan for finding_id={finding_id}\n"
+        f"# AUTO-GENERATED by approval_executor -- DO NOT RUN without review\n"
+        f"# generated: {_now_utc()}\n"
+        f"#\n"
+        f"# Steps to execute manually after review:\n"
+        f"# 1. Install git-filter-repo: pip install git-filter-repo\n"
+        f"# 2. Back up the repo: cp -r <repo> <repo>.bak\n"
+        f"# 3. Run: git filter-repo --invert-paths --path <path-to-remove>\n"
+        f"# 4. Force-push ONLY to your own fork with explicit consent.\n"
+        f"#\n"
+        f"# !! This script is a PLAN, not executable. Review every line first.\n"
+    )
+    if not plan_path.exists():
+        plan_path.write_text(plan_content, encoding="utf-8")
+        plan_path.chmod(0o600)
+
+    return {"ok": True, "preview": preview, "plan_path": str(plan_path)}
+
+
+def _exec_cred_rotate_plan(finding_id: str, exec_id: str, dry_run: bool) -> dict:
+    """
+    Write a credential rotation plan file to ~/inbox/_plans/ for user review.
+    NEVER rotates credentials directly. Human eye required.
+    """
+    plans_dir = HOME / "inbox" / "_plans"
+    plan_path = plans_dir / f"cred_rotate_{finding_id}.sh"
+
+    preview = f"cred_rotate_plan: write plan to {plan_path}"
+    if dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview}
+
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    plan_content = (
+        f"#!/bin/sh\n"
+        f"# Credential rotation plan for finding_id={finding_id}\n"
+        f"# AUTO-GENERATED by approval_executor -- DO NOT RUN without review\n"
+        f"# generated: {_now_utc()}\n"
+        f"#\n"
+        f"# Steps to execute manually after review:\n"
+        f"# 1. Identify exposed credential (see finding in ~/inbox/critical/{finding_id}.json)\n"
+        f"# 2. Revoke old credential via provider dashboard\n"
+        f"# 3. Generate new credential\n"
+        f"# 4. Update ~/.env or relevant config file\n"
+        f"# 5. Restart affected services\n"
+        f"# 6. Verify old credential no longer works\n"
+        f"#\n"
+        f"# !! This script is a PLAN, not executable. Review every line first.\n"
+    )
+    if not plan_path.exists():
+        plan_path.write_text(plan_content, encoding="utf-8")
+        plan_path.chmod(0o600)
+
+    return {"ok": True, "preview": preview, "plan_path": str(plan_path)}
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +797,24 @@ def _dispatch_action(action_type: str, action_params: dict, brief_id: str,
         # mac has launchd, not systemd -- redirect to plist_reload
         label = action_params.get("label", action_params.get("unit", ""))
         return _exec_plist_reload(label, exec_id, dry_run)
+
+    if action_type == "file_map_update":
+        note = action_params.get("note", "")
+        return _exec_file_map_update(note, exec_id, dry_run)
+
+    if action_type == "memory_cleanup":
+        return _exec_memory_cleanup(exec_id, dry_run)
+
+    if action_type == "disk_cleanup":
+        return _exec_disk_cleanup(exec_id, dry_run)
+
+    if action_type == "git_filter_repo_plan":
+        finding_id = action_params.get("finding_id", brief_id)
+        return _exec_git_filter_repo_plan(finding_id, exec_id, dry_run)
+
+    if action_type == "cred_rotate_plan":
+        finding_id = action_params.get("finding_id", brief_id)
+        return _exec_cred_rotate_plan(finding_id, exec_id, dry_run)
 
     return {"ok": False, "reason": f"Unknown action_type: {action_type!r}"}
 
@@ -630,8 +922,19 @@ def _process_approval(approval_path: Path, dry_run: bool) -> dict:
         _write_audit(result, dry_run)
         return result
 
-    # Dispatch
-    exec_result = _dispatch_action(action_type, action_params, brief_id, code, exec_id, dry_run)
+    # Phase 5: Cross-host dispatch.
+    # If the brief originated on a non-mac host AND the action must run on origin,
+    # SSH back to the origin host and execute there instead of locally.
+    brief_host = brief.get("host", "mac")
+    ssh_alias  = _SSH_ALIAS_MAP.get(brief_host)
+    if ssh_alias and action_type in _REMOTE_ACTION_TYPES:
+        _log(f"  Cross-host dispatch: brief_host={brief_host!r} -> SSH alias={ssh_alias!r}")
+        exec_result = _ssh_exec_action(
+            ssh_alias, brief_id, action_type, action_params, command, exec_id, dry_run
+        )
+    else:
+        # Dispatch locally (mac actions, plan-writes, no_ops)
+        exec_result = _dispatch_action(action_type, action_params, brief_id, code, exec_id, dry_run)
 
     pre_hash = exec_result.get("gates", {}).get("pre_hash", exec_result.get("pre_hash", "N/A"))
     # Compatibility: pre_hash may be nested inside gates result
@@ -702,6 +1005,97 @@ def _rollback(exec_id: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# --from-verdict: generate approval files from verdict APPROVED decisions
+# ---------------------------------------------------------------------------
+
+VERDICTS_DIR = HOME / "inbox" / "_summaries" / "verdicts"
+
+
+def _load_verdict_for_exec(verdict_id: str) -> dict | None:
+    """
+    Find and parse a verdict JSON in VERDICTS_DIR by verdict_id.
+    Returns None if not found or unreadable.
+    """
+    for fpath in sorted(VERDICTS_DIR.glob("*.json")):
+        try:
+            data = json.loads(fpath.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("verdict_id") == verdict_id:
+            return data
+    return None
+
+
+def _generate_approval_files_from_verdict(verdict_id: str, dry_run: bool) -> list[Path]:
+    """
+    Read verdict, create one approval file per APPROVED decision.
+    CLUSTERED decisions are skipped (meta-action handles them).
+    Returns list of approval file paths created.
+
+    Approval file format mirrors what _process_approval() expects:
+      brief_id = action_id  (lookup in archive/inbox by action_id as brief_id)
+      code = "VERDICT_APPROVED"
+
+    Security: this function only reads the verdict from VERDICTS_DIR (controlled path).
+    It does NOT execute shell commands; it only writes approval JSON files into
+    APPROVALS_DIR which the existing V1-V5 gated executor then processes.
+    """
+    verdict = _load_verdict_for_exec(verdict_id)
+    if verdict is None:
+        _log(f"--from-verdict: verdict {verdict_id!r} not found in {VERDICTS_DIR}")
+        sys.exit(1)
+
+    # Validate expected keys
+    if "decisions" not in verdict:
+        _log(f"--from-verdict: verdict {verdict_id!r} missing 'decisions' field")
+        sys.exit(1)
+
+    # Collect CLUSTERED ids (never double-apply)
+    clustered_ids: set[str] = {
+        d["action_id"]
+        for d in verdict["decisions"]
+        if d.get("decision") == "CLUSTERED"
+    }
+
+    created: list[Path] = []
+    APPROVALS_DIR.mkdir(parents=True, exist_ok=True)
+
+    for dec in verdict["decisions"]:
+        action_id = dec.get("action_id", "")
+        decision  = dec.get("decision", "")
+
+        if decision != "APPROVED":
+            _log(f"  SKIP {action_id!r} decision={decision!r}")
+            continue
+
+        if action_id in clustered_ids:
+            _log(f"  SKIP {action_id!r} — in CLUSTERED set")
+            continue
+
+        if not dec.get("dependencies_met", True):
+            _log(f"  SKIP {action_id!r} — dependencies_met=false")
+            continue
+
+        exec_id   = str(uuid.uuid4())[:8]
+        ap_path   = APPROVALS_DIR / f"verdict_{exec_id}.json"
+        approval  = {
+            "brief_id":  action_id,
+            "code":      "VERDICT_APPROVED",
+            "timestamp": _now_utc(),
+            "source":    f"from-verdict:{verdict_id}",
+        }
+
+        if dry_run:
+            _log(f"  [DRY-RUN] would write approval file: {ap_path.name} for action_id={action_id!r}")
+        else:
+            ap_path.write_text(json.dumps(approval, indent=2), encoding="utf-8")
+            _log(f"  wrote approval: {ap_path.name} for action_id={action_id!r}")
+            created.append(ap_path)
+
+    return created
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="approval_executor.py -- Big SystemD P8-3 approval executor"
@@ -710,6 +1104,8 @@ def main() -> None:
                         help="Parse + validate approvals, write dry-run audit entries, DO NOT apply actions")
     parser.add_argument("--rollback", metavar="EXEC_ID",
                         help="Rollback a previously executed action by exec_id")
+    parser.add_argument("--from-verdict", metavar="VERDICT_ID",
+                        help="Generate approval files from APPROVED decisions in a verdict, then run exec loop")
     args = parser.parse_args()
 
     if args.rollback:
@@ -718,13 +1114,29 @@ def main() -> None:
 
     dry_run = args.dry_run
     mode = "DRY-RUN" if dry_run else "LIVE"
-    _log(f"approval_executor starting [{mode}]")
 
-    pattern = str(APPROVALS_DIR / "*.json")
-    approval_files = sorted(
-        f for f in glob.glob(pattern)
-        if not os.path.basename(f).startswith(".")
-    )
+    if args.from_verdict:
+        # Phase 10.16 verdict path: generate approval files from verdict, process ONLY those files.
+        # Does NOT touch the broader _approvals/ backlog — verdict actions are isolated.
+        verdict_id = args.from_verdict
+        _log(f"approval_executor starting [{mode}] --from-verdict={verdict_id!r}")
+        created = _generate_approval_files_from_verdict(verdict_id, dry_run)
+        if dry_run:
+            _log("--from-verdict [DRY-RUN]: approval file generation previewed; exec loop skipped")
+            return
+        if not created:
+            _log("--from-verdict: no approval files created (no APPROVED decisions or all skipped)")
+            return
+        # Process ONLY the verdict-generated files (not the full backlog)
+        approval_files = [str(p) for p in sorted(created)]
+        _log(f"--from-verdict: processing {len(approval_files)} verdict-generated approval file(s)")
+    else:
+        _log(f"approval_executor starting [{mode}]")
+        pattern = str(APPROVALS_DIR / "*.json")
+        approval_files = sorted(
+            f for f in glob.glob(pattern)
+            if not os.path.basename(f).startswith(".")
+        )
 
     if not approval_files:
         _log("No approval files found -- nothing to process")
