@@ -58,6 +58,55 @@ HKT = timezone(timedelta(hours=8))
 # Keywords that make a prompt recognizable as an ack
 ACK_KEYWORDS = {"approve", "defer", "skip", "ack", "yes", "no"}
 
+# F2 (bigd-pipeline-repair Phase 3): strict-shape regex.
+# Matches prompts that look like ONLY ack vocabulary (digits, separators,
+# ack words, ranges). Bernard's normal sentences ("yes also...", "ok lets do A")
+# will NOT fullmatch this. Used when no briefs were emitted last turn.
+_STRICT_ACK_RE = re.compile(
+    r"^[\s\d,\-]*"
+    r"(approve|defer|skip|ack|yes|no|all)"
+    r"([\s,\-]+(approve|defer|skip|ack|yes|no|all|[1-5]|[1-5]-[1-5]))*"
+    r"[\s\d,\-]*$",
+    re.I,
+)
+
+# Session-state sentinel path (matches inbox_hook.py /tmp scheme)
+_TMP_DIR = "/tmp"
+
+def _session_id():
+    sid = os.environ.get("CLAUDE_SESSION_ID", "")
+    if sid:
+        return sid[:32]
+    return str(os.getppid())
+
+def _state_path(session_id):
+    return os.path.join(_TMP_DIR, f"claude_inbox_inject_{session_id}.json")
+
+def _briefs_emitted_last_turn():
+    """Read the sentinel inbox_hook.py writes when it emits a brief panel.
+    Returns False on any IO/parse error (fail-closed: treat as not emitted).
+    """
+    try:
+        with open(_state_path(_session_id())) as f:
+            raw = json.load(f)
+        return bool(raw.get("briefs_emitted_last_turn", False))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+
+def _clear_briefs_emitted_sentinel():
+    """Reset the sentinel after consuming an ack so next non-ack prompt
+    is gated by strict-shape only.
+    """
+    path = _state_path(_session_id())
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+        raw["briefs_emitted_last_turn"] = False
+        with open(path, "w") as f:
+            json.dump(raw, f)
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+
 # Word-to-code normalization
 WORD_MAP = {
     "approve": "approve",
@@ -165,6 +214,15 @@ def _parse_prompt(prompt):
 
     if not has_ack_keyword and not has_digit_keyword:
         return None
+
+    # F2 gate: when inbox_hook.py did NOT emit briefs last turn, require the
+    # entire prompt to fullmatch _STRICT_ACK_RE. This prevents casual replies
+    # like "yes also fix X" from auto-archiving the oldest brief.
+    # Scoped "ack <id>" form is exempt — that's an unambiguous user intent.
+    has_scoped_ack = any(t == "ack" for t in tokens) and len(tokens) >= 2
+    if not has_scoped_ack and not _briefs_emitted_last_turn():
+        if not _STRICT_ACK_RE.fullmatch(prompt.strip()):
+            return None
 
     # Extract scoped brief_id: "ack <brief_id>" pattern
     # Use orig_tokens for case-preserving ID; lowercased tokens for position
@@ -377,6 +435,9 @@ def main():
                     break
 
         if acked:
+            # F2: clear sentinel so the NEXT prompt is gated by strict-shape.
+            # The current ack consumed the "briefs_emitted_last_turn" credit.
+            _clear_briefs_emitted_sentinel()
             # Inject context so Claude sees the ack result
             lines = ["<inbox-ack>"]
             lines.append(f"Acknowledged {len(acked)} brief(s):")
