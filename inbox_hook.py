@@ -8,14 +8,15 @@
 # always_fire: false
 """UserPromptSubmit hook: inject inbox briefs into additionalContext.
 
-Order of operations (P10.15):
-1. Check ~/inbox/_summaries/ready/*.json — if any bundle present:
-   a. Read latest bundle (by filename date, YYYY-MM-DD_bundle.json)
-   b. Format into human-readable summary per daemon x host + cross-refs
-   c. Include in additionalContext
-   d. Call collector.py --consume <bundle_id> to move ready -> consumed
-   e. Record bundle_id in session state so same session does not re-inject
-2. Fallback: if NO bundle in ready/, use legacy critical/+daily/+weekly injection
+Order of operations (P10.15 + FP-18):
+1. Check ~/inbox/_summaries/ready/*.json — if any bundles present:
+   a. Read up to 3 bundles (by filename date, YYYY-MM-DD_bundle.json), newest first
+   b. Skip bundles already injected this session (by bundle_id)
+   c. Format each new bundle into human-readable digest
+   d. Concatenate all new bundle digests into one additionalContext block
+   e. Call collector.py --consume <bundle_id> for each consumed bundle
+   f. Record all bundle_ids in session state so same session does not re-inject
+2. Fallback: if NO new bundle in ready/, use legacy critical/+daily/+weekly injection
 3. Session delta (F6) stays: don't re-inject same bundle_id or same brief IDs
 
 Tier delivery schedule (HKT = UTC+8) — applies only to legacy fallback path:
@@ -128,29 +129,75 @@ def _state_path(session_id: str) -> str:
 
 
 def _load_state(session_id: str) -> dict:
-    """Load session inject state. Returns {inject_ts: float, seen_ids: set, bundle_ids: set}."""
+    """Load session inject state.
+    Returns {inject_ts, seen_ids, bundle_ids, critical_shown_ids, bundle_ts}.
+
+    F5 schema migration: bundle_ids may load as either:
+      - legacy list[str] -> dict[str, float] with ts=0.0 (eligible for TTL re-inject immediately)
+      - new dict[str, float] -> kept as-is
+
+    F4 schema addition: critical_shown_ids = set of brief IDs shown via PATH B
+    critical-always sub-path (independent of bundle dedup).
+
+    F2 schema addition: briefs_emitted_last_turn = bool (read by inbox_ack.py).
+    """
     path = _state_path(session_id)
     try:
         with open(path) as f:
             raw = json.load(f)
+        # Migrate bundle_ids: list -> dict
+        raw_bundle_ids = raw.get("bundle_ids", [])
+        if isinstance(raw_bundle_ids, list):
+            bundle_ts = {bid: 0.0 for bid in raw_bundle_ids}
+        elif isinstance(raw_bundle_ids, dict):
+            bundle_ts = {str(k): float(v) for k, v in raw_bundle_ids.items()}
+        else:
+            bundle_ts = {}
         return {
             "inject_ts": float(raw.get("inject_ts", 0)),
             "seen_ids": set(raw.get("seen_ids", [])),
-            "bundle_ids": set(raw.get("bundle_ids", [])),
+            "bundle_ids": bundle_ts,  # now dict[str, float]
+            "critical_shown_ids": set(raw.get("critical_shown_ids", [])),
+            "briefs_emitted_last_turn": bool(raw.get("briefs_emitted_last_turn", False)),
         }
     except (OSError, json.JSONDecodeError, ValueError):
-        return {"inject_ts": 0.0, "seen_ids": set(), "bundle_ids": set()}
+        return {
+            "inject_ts": 0.0,
+            "seen_ids": set(),
+            "bundle_ids": {},
+            "critical_shown_ids": set(),
+            "briefs_emitted_last_turn": False,
+        }
 
 
-def _save_state(session_id: str, inject_ts: float, seen_ids: set, bundle_ids: set) -> None:
-    """Persist session inject state to /tmp."""
+# F5: TTL after which a bundle is eligible for re-injection in same session
+BUNDLE_TTL_SEC = 7200  # 2 hours
+
+
+def _save_state(
+    session_id: str,
+    inject_ts: float,
+    seen_ids: set,
+    bundle_ids,  # dict[str, float] (new) or set/list (legacy callers)
+    critical_shown_ids: set | None = None,
+    briefs_emitted_last_turn: bool = False,
+) -> None:
+    """Persist session inject state to /tmp.
+    Tolerates legacy callers passing bundle_ids as set/list (converts to dict).
+    """
     path = _state_path(session_id)
+    if isinstance(bundle_ids, (set, list)):
+        bundle_ids = {bid: time.time() for bid in bundle_ids}
+    if critical_shown_ids is None:
+        critical_shown_ids = set()
     try:
         with open(path, "w") as f:
             json.dump({
                 "inject_ts": inject_ts,
                 "seen_ids": list(seen_ids),
-                "bundle_ids": list(bundle_ids),
+                "bundle_ids": dict(bundle_ids),
+                "critical_shown_ids": list(critical_shown_ids),
+                "briefs_emitted_last_turn": bool(briefs_emitted_last_turn),
             }, f)
     except OSError as e:
         print(f"[inbox_hook] WARN: cannot save state to {path}: {e}", file=sys.stderr)
@@ -187,7 +234,7 @@ def _brief_priority(brief: dict) -> int:
     return {"critical": 0, "daily": 1, "weekly": 2}.get(brief.get("tier", ""), 3)
 
 
-def _format_brief(brief, idx, also_reported_by: list = None):
+def _format_brief(brief, idx, also_reported_by: list | None = None):
     """Format a single brief for additionalContext injection."""
     lines = [
         f"[INBOX #{idx}] [{brief['tier'].upper()}] {brief['title']}",
@@ -372,40 +419,50 @@ def _format_host_grouped(selected: list, inject_label: str) -> str:
 # Bundle injection (P10.15)
 # ---------------------------------------------------------------------------
 
-def _latest_ready_bundle():
+def _ready_bundles(max_count: int = 3) -> list:
     """
-    Return (bundle_id, bundle_dict) of the latest bundle in ready/ by filename date.
-    Returns (None, None) if ready/ is empty or all files are malformed.
+    Return list of (bundle_id, bundle_dict) for up to max_count bundles in ready/,
+    sorted newest-first by filename date. Skips malformed files with a warning.
+    Returns empty list if ready/ is empty or all files are malformed.
+    FP-18: replaces single-bundle _latest_ready_bundle().
     """
     pattern = os.path.join(BUNDLE_READY_DIR, "*_bundle.json")
-    paths = sorted(glob.glob(pattern))  # lexicographic = date order
+    paths = sorted(glob.glob(pattern), reverse=True)  # newest first
     if not paths:
-        return None, None
-    # Take the last (latest date)
-    path = paths[-1]
-    try:
-        raw = open(path, "rb").read()
-        bundle = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[inbox_hook] WARN: cannot read bundle {path} — {e}", file=sys.stderr)
-        return None, None
+        return []
 
-    bundle_id = bundle.get("bundle_id")
-    if not bundle_id:
-        print(f"[inbox_hook] WARN: bundle {path} missing bundle_id", file=sys.stderr)
-        return None, None
-
-    # Validate required top-level bundle fields
     _BUNDLE_REQUIRED = ["bundle_id", "date", "assembled_at", "summaries_count", "summaries"]
-    for field in _BUNDLE_REQUIRED:
-        if field not in bundle:
-            print(f"[inbox_hook] WARN: bundle {path} missing field '{field}', falling back to legacy", file=sys.stderr)
-            return None, None
-    if not isinstance(bundle.get("summaries"), dict):
-        print(f"[inbox_hook] WARN: bundle {path} 'summaries' not a dict, falling back to legacy", file=sys.stderr)
-        return None, None
+    results = []
+    for path in paths:
+        if len(results) >= max_count:
+            break
+        try:
+            raw = open(path, "rb").read()
+            bundle = json.loads(raw)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[inbox_hook] WARN: cannot read bundle {path} — {e}", file=sys.stderr)
+            continue
 
-    return bundle_id, bundle
+        bundle_id = bundle.get("bundle_id")
+        if not bundle_id:
+            print(f"[inbox_hook] WARN: bundle {path} missing bundle_id", file=sys.stderr)
+            continue
+
+        valid = True
+        for field in _BUNDLE_REQUIRED:
+            if field not in bundle:
+                print(f"[inbox_hook] WARN: bundle {path} missing field '{field}', skipping", file=sys.stderr)
+                valid = False
+                break
+        if not valid:
+            continue
+        if not isinstance(bundle.get("summaries"), dict):
+            print(f"[inbox_hook] WARN: bundle {path} 'summaries' not a dict, skipping", file=sys.stderr)
+            continue
+
+        results.append((bundle_id, bundle))
+
+    return results
 
 
 def _consume_bundle(bundle_id: str) -> None:
@@ -673,47 +730,74 @@ def main():
         is_first_inject = state["inject_ts"] == 0.0
 
         # ------------------------------------------------------------------
-        # PATH A: Bundle injection (P10.15)
+        # PATH A: Bundle injection (P10.15 + FP-18: up to 3-bundle aggregation)
+        # F5 hybrid: bundle is "fresh" if either never seen this session OR
+        # last-injected > BUNDLE_TTL_SEC ago. Bundle digest filters out
+        # acked actions via state["seen_ids"] (best-effort; per-action acked_action_ids
+        # would require ack pipeline changes — out of scope for Phase 3).
         # ------------------------------------------------------------------
-        bundle_id, bundle = _latest_ready_bundle()
+        ready = _ready_bundles(max_count=3)
 
-        if bundle_id is not None:
-            # Check session dedup: if this bundle was already injected this session, skip
-            if bundle_id in state["bundle_ids"]:
-                # Already injected this session — emit empty
-                print(f"[inbox_hook] bundle {bundle_id} already injected this session, skipping", file=sys.stderr)
-                _save_state(session_id, time.time(), state["seen_ids"], state["bundle_ids"])
-                log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
-                print(json.dumps({}))
-                return
+        now_ts = time.time()
+        # F5: bundle eligible if not seen OR last-seen older than TTL
+        new_bundles = [
+            (bid, b) for bid, b in ready
+            if (bid not in state["bundle_ids"])
+            or (now_ts - state["bundle_ids"].get(bid, 0.0) > BUNDLE_TTL_SEC)
+        ]
 
-            # Format bundle
-            try:
-                bundle_text = _format_bundle(bundle)
-            except Exception as e:
-                print(f"[inbox_hook] WARN: bundle format failed ({e}), falling back to legacy", file=sys.stderr)
-                bundle_id = None  # fall through to legacy path
+        # F4 additive design: PATH A may emit a bundle digest;
+        # PATH B (critical-always) may also emit a critical panel.
+        # Both concatenate into additionalContext if both have content.
+        path_a_context = None
+        path_a_consumed_ids = []
 
-            if bundle_id is not None:
+        if new_bundles:
+            digest_parts = []
+            consumed_ids = []
+
+            for bundle_id, bundle in new_bundles:
+                # Format bundle
+                try:
+                    bundle_text = _format_bundle(bundle)
+                except Exception as e:
+                    print(f"[inbox_hook] WARN: bundle {bundle_id} format failed ({e}), skipping", file=sys.stderr)
+                    continue
+
                 # Build category-grouped approval queue digest (FP-9/10)
                 try:
                     digest_text = _format_bundle_digest(bundle)
                 except Exception as de:
-                    print(f"[inbox_hook] WARN: digest format failed ({de}), using raw bundle", file=sys.stderr)
+                    print(f"[inbox_hook] WARN: bundle {bundle_id} digest failed ({de}), using raw", file=sys.stderr)
                     digest_text = bundle_text
-                context = digest_text
-                out = json.dumps({"additionalContext": context})
 
-                # Consume: move ready -> consumed (graceful fail)
-                _consume_bundle(bundle_id)
+                digest_parts.append(digest_text)
+                consumed_ids.append(bundle_id)
 
-                # Update session state: record bundle_id as seen
-                new_bundle_ids = state["bundle_ids"] | {bundle_id}
-                _save_state(session_id, time.time(), state["seen_ids"], new_bundle_ids)
+            if consumed_ids:
+                if len(digest_parts) == 1:
+                    path_a_context = digest_parts[0]
+                else:
+                    sep = "\n\n" + ("=" * 60) + "\n\n"
+                    path_a_context = sep.join(digest_parts)
+                    path_a_context = f"[{len(digest_parts)} bundles aggregated — FP-18]\n\n" + path_a_context
 
-                log_fire_done(__file__, _t0, errored=False, output_size_bytes=len(out))
-                print(out)
-                return
+                # Consume all: move ready -> consumed (graceful fail, non-blocking)
+                for bid in consumed_ids:
+                    _consume_bundle(bid)
+
+                path_a_consumed_ids = consumed_ids
+
+                # F5: record bundle injection timestamps (for TTL re-inject)
+                for bid in consumed_ids:
+                    state["bundle_ids"][bid] = now_ts
+
+                print(f"[inbox_hook] PATH A: injected {len(consumed_ids)} bundle(s): {consumed_ids}", file=sys.stderr)
+
+        elif ready:
+            # All ready bundles already injected this session AND TTL not yet expired
+            all_ids = [bid for bid, _ in ready]
+            print(f"[inbox_hook] all ready bundles within TTL window: {all_ids}", file=sys.stderr)
 
         # ------------------------------------------------------------------
         # PATH B: Legacy injection (critical/+daily/+weekly briefs)
@@ -760,32 +844,84 @@ def main():
         if _in_weekly_window(now):
             candidates.extend(_load_briefs("weekly"))
 
-        if not candidates:
-            _save_state(session_id, time.time(), state["seen_ids"], state["bundle_ids"])
-            log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
-            print(json.dumps({}))
-            return
+        # F4: critical-always sub-path. Surface up to N=5 oldest critical
+        # briefs not yet shown this session, even if PATH A bundle was injected.
+        # Independent dedup via state["critical_shown_ids"].
+        path_b_context = None
+        path_b_critical_shown = []
+        CRITICAL_PAGE_SIZE = 5
+        critical_briefs = _load_briefs("critical")
+        critical_unshown = [
+            (p, b) for p, b in critical_briefs
+            if b.get("id", "") not in state["critical_shown_ids"]
+        ]
+        # Sort oldest-first by mtime so user works through backlog
+        def _crit_sort_key(item):
+            p, _ = item
+            try:
+                return os.path.getmtime(p)
+            except OSError:
+                return 0.0
+        critical_unshown.sort(key=_crit_sort_key)
+        critical_page = critical_unshown[:CRITICAL_PAGE_SIZE]
 
-        # Apply delta filter: first inject gets all, subsequent get only new/updated
-        if is_first_inject:
-            selected = candidates
-            inject_label = f"all ({len(selected)} briefs, first inject this session)"
+        if critical_page:
+            total_crit = len(critical_briefs)
+            unshown_total = len(critical_unshown)
+            page_label = (
+                f"critical-page ({len(critical_page)} of {unshown_total} unshown; "
+                f"{total_crit} total in critical/) — reply 'ack <id> 1' or 'more' for next page"
+            )
+            path_b_context = _format_host_grouped(critical_page, page_label)
+            path_b_critical_shown = [b.get("id", "") for _, b in critical_page]
+            print(
+                f"[inbox_hook] PATH B critical-always: showing {len(critical_page)} of {unshown_total}",
+                file=sys.stderr,
+            )
+
+        # Daily / weekly windows still use the legacy first-inject + delta logic
+        # WITHOUT the critical/ duplication (already covered above).
+        legacy_candidates: list[tuple[str, dict]] = []
+        if _in_daily_window(now):
+            legacy_candidates.extend(_load_briefs("daily"))
+        if _in_weekly_window(now):
+            legacy_candidates.extend(_load_briefs("weekly"))
+
+        legacy_context = None
+        if legacy_candidates:
+            if is_first_inject:
+                selected = legacy_candidates
+                inject_label = f"all ({len(selected)} daily/weekly briefs, first inject this session)"
+            else:
+                selected = [(p, b) for p, b in legacy_candidates if _is_delta(b, state)]
+                inject_label = f"delta ({len(selected)} daily/weekly new/updated since last inject)"
+            if selected:
+                legacy_context = _format_host_grouped(selected, inject_label)
+
+        # ------------------------------------------------------------------
+        # Combine PATH A + PATH B critical + legacy daily/weekly contexts
+        # ------------------------------------------------------------------
+        parts = [c for c in (path_a_context, path_b_context, legacy_context) if c]
+        emitted_briefs = bool(parts)
+
+        if emitted_briefs:
+            sep = "\n\n" + ("=" * 60) + "\n\n"
+            context = sep.join(parts)
+            out = json.dumps({"additionalContext": context})
         else:
-            selected = [(p, b) for p, b in candidates if _is_delta(b, state)]
-            if not selected:
-                # No new briefs since last inject — emit empty
-                _save_state(session_id, time.time(), state["seen_ids"], state["bundle_ids"])
-                log_fire_done(__file__, _t0, errored=False, output_size_bytes=2)
-                print(json.dumps({}))
-                return
-            inject_label = f"delta ({len(selected)} new/updated since last inject)"
+            out = json.dumps({})
 
-        context = _format_host_grouped(selected, inject_label)
-        out = json.dumps({"additionalContext": context})
-
-        # Update session state: record inject timestamp + seen IDs
-        new_seen = state["seen_ids"] | {b.get("id", "") for _, b in candidates}
-        _save_state(session_id, time.time(), new_seen, state["bundle_ids"])
+        # Update session state. Sentinel for inbox_ack F2 gate.
+        new_seen = state["seen_ids"] | {b.get("id", "") for _, b in legacy_candidates}
+        new_critical_shown = state["critical_shown_ids"] | set(path_b_critical_shown)
+        _save_state(
+            session_id,
+            time.time(),
+            new_seen,
+            state["bundle_ids"],
+            critical_shown_ids=new_critical_shown,
+            briefs_emitted_last_turn=emitted_briefs,
+        )
 
         log_fire_done(__file__, _t0, errored=False, output_size_bytes=len(out))
         print(out)

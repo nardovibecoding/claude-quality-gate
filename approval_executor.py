@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-approval_executor.py — Big SystemD Phase 8-3 (slices 3a/3b/3c)
+approval_executor.py — Big SystemD Phase 8-3 + FP-4 (slices 3a/3b/3c)
 
 Reads ~/inbox/_approvals/*.json, looks up the corresponding archived brief,
 maps the approved action to a WHITELISTED action type, runs V1-V5 gates,
@@ -27,6 +27,7 @@ Rollback files: ~/inbox/_rollback/<exec_id>/
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import difflib
 import glob
 import hashlib
@@ -40,6 +41,17 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
+
+# Shared audit rotation helper
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _audit_rotation import rotate_audit_files as _rotate_audit_files
+    _SHARED_ROTATION = True
+except ImportError:
+    _SHARED_ROTATION = False
+    def _rotate_audit_files(*args, **kwargs):
+        pass
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -50,6 +62,36 @@ APPROVALS_DIR    = INBOX_ROOT / "_approvals"
 ARCHIVE_DIR      = INBOX_ROOT / "archive"
 AUDIT_ROOT       = INBOX_ROOT / "_audit"
 ROLLBACK_ROOT    = INBOX_ROOT / "_rollback"
+# FP-30.9 Wave 1 Fix 2 — dashboard poll directories.
+# After processing an approval, the executor moves the approval file into one
+# of these three subdirs. Dashboard (VibeIsland FixButton) polls these paths
+# by approval filename (== execId from the UI) to resolve its result state.
+PROCESSED_ROOT   = APPROVALS_DIR / "_processed"
+PROCESSED_APPLIED = PROCESSED_ROOT / "applied"
+PROCESSED_FAILED  = PROCESSED_ROOT / "failed"
+PROCESSED_SKIPPED = PROCESSED_ROOT / "skipped"
+# F3 (bigd-pipeline-repair Phase 3) RK4: 7-day grace landing pad for
+# empty-command briefs that lack explicit action_type:"no_op". Routed here
+# instead of failed/ until inbox_writer.py upgrades emit explicit no_op.
+PROCESSED_TRANSITIONING = PROCESSED_ROOT / "transitioning"
+# Grace anchor timestamp file: written on first run after deploy.
+F3_GRACE_ANCHOR_PATH = PROCESSED_ROOT / ".f3_grace_anchor"
+F3_GRACE_SEC = 7 * 24 * 3600  # 7 days
+
+
+def _f3_within_grace() -> bool:
+    """True if we're inside the 7-day F3 transition grace window.
+    Anchor file is created on first call (idempotent).
+    """
+    try:
+        PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
+        if not F3_GRACE_ANCHOR_PATH.exists():
+            F3_GRACE_ANCHOR_PATH.write_text(str(int(__import__('time').time())))
+            return True
+        anchor_ts = int(F3_GRACE_ANCHOR_PATH.read_text().strip() or "0")
+        return (int(__import__('time').time()) - anchor_ts) <= F3_GRACE_SEC
+    except (OSError, ValueError):
+        return True  # fail-safe: stay in grace if anything is wrong
 
 # ---------------------------------------------------------------------------
 # Allowlisted path roots for file_delete / file_edit
@@ -93,8 +135,11 @@ _COMMAND_ALLOWLIST: list[tuple[re.Pattern, str, str]] = [
     # cat / tail log commands -- read-only, allowed
     (re.compile(r"^(cat|tail)\s+~/[^\s;|&`$<>]+\.(log|jsonl|txt|md)(\s+-[a-z0-9 ]+)?$"),
      "no_op", "read-only log view -- no side effect"),
-    # Empty command = defer/skip
-    (re.compile(r"^$"), "no_op", "empty command = defer/skip"),
+    # F3 (bigd-pipeline-repair Phase 3): r"^$" → no_op rule REMOVED.
+    # Briefs that intend a true no-op MUST declare action_type:"no_op" on the
+    # action itself (preferred via matched_action.get("action_type") at the
+    # callsite). Empty-command actions without that field now route to
+    # _processed/transitioning/ for 7 days (RK4 grace), then to failed/.
 ]
 
 # ---------------------------------------------------------------------------
@@ -188,7 +233,104 @@ def _infer_action_type(command: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# V1-V5 gates for file actions
+# Gate class + GATES registry (FP-4)
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class Gate:
+    """
+    A single pre-execution gate check.
+
+    check(brief) returns None on pass, or a reason string on failure.
+    severity: "hard" (blocks execution) or "warn" (logged only, does not block).
+    """
+    name: str
+    description: str
+    severity: str  # "hard" | "warn"
+    _check_fn: dataclasses.InitVar[object] = dataclasses.field(default=None)
+
+    def __post_init__(self, _check_fn):
+        self._fn = _check_fn
+
+    def check(self, brief: dict) -> Optional[str]:
+        """Return None (pass) or reason string (fail)."""
+        try:
+            return self._fn(brief)
+        except Exception as exc:
+            return f"gate_check_exception: {exc}"
+
+
+@dataclasses.dataclass
+class Blocked:
+    """Result returned when a hard gate rejects an action."""
+    gate_name: str
+    reason: str
+
+
+def _gate_v1_action_type_known(brief: dict) -> Optional[str]:
+    """V1: action_type must be in allowlist (not REJECTED or unknown)."""
+    action_type = brief.get("_resolved_action_type", "")
+    if action_type == "REJECTED":
+        return "action_type REJECTED: command not in allowlist"
+    if not action_type:
+        return "action_type is empty"
+    return None
+
+
+def _gate_v2_brief_id_present(brief: dict) -> Optional[str]:
+    """V2: brief must have a non-empty brief_id."""
+    if not brief.get("brief_id", "").strip():
+        return "brief_id is missing or empty"
+    return None
+
+
+def _gate_v3_action_code_present(brief: dict) -> Optional[str]:
+    """V3: approval must include a code that matches an action in the brief."""
+    if not brief.get("_matched_action"):
+        return "no action matched approval code in brief"
+    return None
+
+
+def _gate_v4_host_known(brief: dict) -> Optional[str]:
+    """V4: host field must be in known set."""
+    known_hosts = {"mac", "hel", "london", "github"}
+    host = brief.get("host", "")
+    if host and host not in known_hosts:
+        return f"host {host!r} not in known hosts {known_hosts}"
+    return None
+
+
+def _gate_v5_no_orphaned_brief(brief: dict) -> Optional[str]:
+    """V5: brief dict must not be None (brief was found in archive/inbox)."""
+    if brief.get("_brief_missing"):
+        return "brief not found in archive or inbox (orphaned approval)"
+    return None
+
+
+# Ordered list of gates — evaluated left to right; first hard-fail blocks.
+GATES: list[Gate] = [
+    Gate("V1", "action_type in allowlist",    "hard", _gate_v1_action_type_known),
+    Gate("V2", "brief_id present",             "hard", _gate_v2_brief_id_present),
+    Gate("V3", "action code matched",          "hard", _gate_v3_action_code_present),
+    Gate("V4", "host is known",                "warn", _gate_v4_host_known),
+    Gate("V5", "brief not orphaned",           "hard", _gate_v5_no_orphaned_brief),
+]
+
+
+def run_gates(context: dict) -> Optional[Blocked]:
+    """
+    Run all GATES against context dict.
+    Returns Blocked(gate_name, reason) on first hard failure, None if all pass.
+    """
+    for gate in GATES:
+        reason = gate.check(context)
+        if reason and gate.severity == "hard":
+            return Blocked(gate_name=gate.name, reason=reason)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# V1-V5 gates for file actions (original file-level gates, unchanged)
 # ---------------------------------------------------------------------------
 
 def _run_v1_v5_file(path: Path, exec_id: str, dry_run: bool) -> dict:
@@ -823,11 +965,74 @@ def _dispatch_action(action_type: str, action_params: dict, brief_id: str,
 # Process one approval file
 # ---------------------------------------------------------------------------
 
+def _move_processed(approval_path: Path, record: dict, dry_run: bool) -> None:
+    """
+    FP-30.9 Wave 1 Fix 2: move a processed approval file into
+    _processed/{applied,failed,skipped}/<filename> so the VibeIsland dashboard
+    can poll by approval filename (execId) to resolve its result state.
+
+    Also rewrites the file contents to include the audit record body so the
+    dashboard can read `error` / `reason` / `ok` / `action_type` fields without
+    a second audit-log lookup. Skipped entirely in dry-run mode.
+
+    Routing:
+      ok=True  AND action_type == no_op                  -> skipped/
+      ok=True  otherwise                                  -> applied/
+      ok=False AND (REJECTED | ORPHANED | NO_MATCHING_ACTION |
+                    gate-blocked | parse_approval_failed) -> skipped/
+      ok=False otherwise (actual exec failure)            -> failed/
+    """
+    if dry_run:
+        return
+    if not approval_path.exists():
+        return
+
+    ok = bool(record.get("ok"))
+    atype = record.get("action_type") or ""
+    gate_blocked = bool(record.get("gate_name")) and record.get("gate_name") != "PASS"
+    parse_err = "parse_approval_failed" in str(record.get("error", ""))
+
+    # F3 Phase 3: REJECTED + empty original command + grace window → transitioning/
+    rejected_empty_cmd = (
+        atype == "REJECTED"
+        and not (record.get("command_rejected") or record.get("command") or "").strip()
+    )
+    if ok and atype == "no_op":
+        dest_dir = PROCESSED_SKIPPED
+    elif ok:
+        dest_dir = PROCESSED_APPLIED
+    elif rejected_empty_cmd and _f3_within_grace():
+        dest_dir = PROCESSED_TRANSITIONING
+    elif atype in ("REJECTED", "ORPHANED", "NO_MATCHING_ACTION") or gate_blocked or parse_err:
+        dest_dir = PROCESSED_SKIPPED
+    else:
+        dest_dir = PROCESSED_FAILED
+
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / approval_path.name
+        # Merge original approval body with audit record so dashboard gets both.
+        merged: dict = {}
+        try:
+            merged.update(json.loads(approval_path.read_text()))
+        except (OSError, json.JSONDecodeError):
+            pass
+        merged["_executor_result"] = record
+        dest.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+        approval_path.unlink()
+    except OSError as e:
+        _log(f"  WARN: failed to move processed approval {approval_path.name}: {e}")
+
+
 def _process_approval(approval_path: Path, dry_run: bool) -> dict:
     """
     Process a single approval file end-to-end.
     Returns audit record dict.
     """
+    # Rotate executor audit files (idempotent, non-fatal, runs once per invocation)
+    if _SHARED_ROTATION:
+        _rotate_audit_files("executor_*.jsonl", label="executor")
+
     exec_id = str(uuid.uuid4())[:8]
     ts_start = _now_utc()
 
@@ -905,18 +1110,28 @@ def _process_approval(approval_path: Path, dry_run: bool) -> dict:
     _log(f"  Processing: brief_id={brief_id!r} code={code!r} label={action_label!r}")
     _log(f"  action_type={action_type!r} command={command[:80]!r}")
 
-    if action_type == "REJECTED":
-        _log(f"  REJECT: command {command!r} not in allowlist")
+    # FP-4: Run typed Gate checks. Build context dict from resolved state.
+    gate_context = {
+        "brief_id":              brief_id,
+        "host":                  brief.get("host", ""),
+        "_resolved_action_type": action_type,
+        "_matched_action":       matched_action,
+        "_brief_missing":        False,  # brief was found (would have exited above otherwise)
+    }
+    blocked = run_gates(gate_context)
+    if blocked is not None:
+        _log(f"  GATE {blocked.gate_name} BLOCKED: {blocked.reason}")
         result = {
             "exec_id": exec_id,
             "brief_id": brief_id,
             "code": code,
             "approved_by_ts": approved_by_ts,
-            "action_type": "REJECTED",
+            "action_type": action_type,
             "action_label": action_label,
             "command_rejected": command,
+            "gate_name": blocked.gate_name,
             "ok": False,
-            "reason": "ALLOWLIST VIOLATION: command not in allowlist",
+            "reason": f"GATE {blocked.gate_name}: {blocked.reason}",
             "timestamp": ts_start,
         }
         _write_audit(result, dry_run)
@@ -952,6 +1167,7 @@ def _process_approval(approval_path: Path, dry_run: bool) -> dict:
         "action_type": action_type,
         "action_label": action_label,
         "command": command,
+        "gate_name": "PASS",  # all gates passed to reach this point
         "pre_state_hash": pre_hash,
         "post_state_hash": post_hash,
         "rollback_path": rollback_path,
@@ -1136,6 +1352,11 @@ def main() -> None:
         approval_files = sorted(
             f for f in glob.glob(pattern)
             if not os.path.basename(f).startswith(".")
+            # FP-30.9 Wave 1 Fix 2: never recurse into the _processed/ archive
+            # (glob on *.json already excludes the subdir, but belt-and-braces
+            # in case a future glob change widens to ** — reject anything under
+            # _processed/ explicitly).
+            and "_processed" not in Path(f).parts
         )
 
     if not approval_files:
@@ -1148,7 +1369,11 @@ def main() -> None:
 
     for ap in approval_files:
         _log(f"Processing: {os.path.basename(ap)}")
-        record = _process_approval(Path(ap), dry_run)
+        ap_path = Path(ap)
+        record = _process_approval(ap_path, dry_run)
+        # FP-30.9 Wave 1 Fix 2: relocate the processed approval so the
+        # dashboard can poll by execId (= approval filename) for status.
+        _move_processed(ap_path, record, dry_run)
         if not record.get("ok"):
             if record.get("action_type") == "REJECTED":
                 results["rejected"] += 1
