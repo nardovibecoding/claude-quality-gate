@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: telemetry_skill_extract
+# fires_on: PostToolUse
+# always_fire: true
+# cost_score: 1
 """PostToolUse hook: detect skill invocations and append to skill_invocations.jsonl.
 
 A "skill invocation" is detected when:

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: state_change_detector
+# fires_on: PostToolUse
+# always_fire: true
+# cost_score: 1
 """PostToolUse hook: detect state-impacting file edits, write marker.
 
 Matches Edit/Write/NotebookEdit on files that represent LIVE state:

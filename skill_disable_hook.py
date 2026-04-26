@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: skill_disable_hook
+# fires_on: PostToolUse
+# always_fire: true
+# cost_score: 1
 """PostToolUse hook on Skill: disable skill after invocation (return to .disabled)."""
 import json
 import sys

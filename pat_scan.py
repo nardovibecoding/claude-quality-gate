@@ -1,8 +1,30 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: pat_scan
+# fires_on: PreToolUse
+# relevant_intents: [git, pm, code]
+# irrelevant_intents: [bigd, telegram, docx, x_tweet, vps, sync, memory, debug]
+# cost_score: 1
+# always_fire: false
 """Block git commands that would embed PATs in remote URLs."""
+import io
 import json
+import os
 import re
 import sys
+
+# Router guard (FP-12)
+_raw_stdin = sys.stdin.read()
+try:
+    _route_prompt = json.loads(_raw_stdin).get("prompt", "") if _raw_stdin else ""
+except Exception:
+    _route_prompt = ""
+sys.path.insert(0, os.path.dirname(__file__))
+from _semantic_router import should_fire as _should_fire
+if not _should_fire(__file__, _route_prompt):
+    print("{}")
+    sys.exit(0)
+sys.stdin = io.StringIO(_raw_stdin)
 
 try:
     data = json.load(sys.stdin)

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: session_continuity
+# fires_on: UserPromptSubmit|SessionStart
+# always_fire: true
+# cost_score: 2
 """UserPromptSubmit hook: inject context after /clear or session start.
 
 Fires when context usage is very low (<8%). Injects:

@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: memory_write_scan
+# fires_on: PostToolUse
+# relevant_intents: [memory, meta]
+# irrelevant_intents: [bigd, pm, telegram, docx, x_tweet, git, code, vps, sync, debug]
+# cost_score: 1
+# always_fire: false
 """PostToolUse hook: scan Write/Edit to memory+wiki files for prompt-injection patterns.
 
 Reuses PROMPT_INJECTION_PATTERNS from skill-security-auditor (CRITICAL only).
 Non-blocking: logs hits to ~/.claude/logs/memory_write_scan.log.
 Daily visibility provided by memory_scan_status.py (UserPromptSubmit hook).
 """
+import io
 import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -118,4 +127,15 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(__file__))
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     main()

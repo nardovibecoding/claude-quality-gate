@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: auto_content_remind
+# fires_on: Stop
+# always_fire: true
+# cost_score: 1
 """Stop hook: remind to save content-worthy moments before session ends."""
 import json
 import os

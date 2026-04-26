@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: sy_scorer_hook
+# fires_on: UserPromptSubmit
+# always_fire: true
+# cost_score: 2
 """
 sy_scorer_hook.py — Slice 3 of passive-lesson pipeline (Job A, live intercept).
 

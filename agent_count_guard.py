@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: agent_count_guard
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """PreToolUse hook: block >1 agent per turn, force Claude to ask user.
 After user approves (sets allowed count), allow up to that many within the turn."""
 import json

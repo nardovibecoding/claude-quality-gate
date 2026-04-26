@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: error_tracker
+# fires_on: PostToolUse
+# always_fire: true
+# cost_score: 1
 """PostToolUse hook: track consecutive Bash errors → inject lesson reminder after 2 in a row."""
 import hashlib
 import json

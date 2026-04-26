@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: agent_tracker
+# fires_on: PreToolUse|SubagentStop
+# always_fire: true
+# cost_score: 1
 """Track background agents across /clear boundaries.
 
 Runs in TWO modes:

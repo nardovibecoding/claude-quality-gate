@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "last_rebuilt_ts": 1776957772,
+  "last_rebuilt_ts": 1777193054,
   "buckets": {
     "scope-and-proceed": {
       "description": "Scope/plan a phase or task, then proceed",
@@ -28,8 +28,8 @@
         "systemctl",
         "pkill"
       ],
-      "accept_count": 23,
-      "total_count": 23
+      "accept_count": 28,
+      "total_count": 29
     },
     "commit-only": {
       "description": "git commit local changes (no push)",
@@ -49,8 +49,8 @@
         "sync",
         "origin"
       ],
-      "accept_count": 6,
-      "total_count": 6
+      "accept_count": 9,
+      "total_count": 9
     },
     "audit-spawn": {
       "description": "Spawn an audit or review agent",
@@ -68,8 +68,8 @@
         "lint",
         "test"
       ],
-      "accept_count": 5,
-      "total_count": 7
+      "accept_count": 10,
+      "total_count": 13
     },
     "wait-for-bg": {
       "description": "Wait for background agent/task to complete",
@@ -86,8 +86,8 @@
         "defer",
         "async"
       ],
-      "accept_count": 1,
-      "total_count": 1
+      "accept_count": 2,
+      "total_count": 2
     },
     "memory-update": {
       "description": "Update memory/file-map/wiki",
@@ -101,8 +101,8 @@
         "lesson",
         "rollup"
       ],
-      "accept_count": 1,
-      "total_count": 1
+      "accept_count": 3,
+      "total_count": 3
     },
     "skill-invoke": {
       "description": "Invoke an existing skill (/ship, /bus, /s)",
@@ -120,7 +120,7 @@
         "trigger"
       ],
       "accept_count": 2,
-      "total_count": 2
+      "total_count": 3
     },
     "config-tweak-local": {
       "description": "Edit local config file (mac-side, non-VPS, non-wallet)",
@@ -145,8 +145,8 @@
         "wallet",
         "key"
       ],
-      "accept_count": 2,
-      "total_count": 2
+      "accept_count": 3,
+      "total_count": 4
     }
   }
 }

@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: mcp_server_restart
+# fires_on: PostToolUse
+# always_fire: false
+# cost_score: 1
+# REMOVAL-CANDIDATE: MCP_SERVICES dict is empty — hook fires but does nothing.
+# No MCP services are currently defined. Either populate MCP_SERVICES or delete.
 """PostToolUse hook: restart MCP servers on VPS after editing their source files."""
 import re
 import sys

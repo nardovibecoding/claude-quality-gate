@@ -55,6 +55,8 @@ def get_top_hubs(nodes: dict, limit: int = 12) -> list[tuple[int, str, str]]:
     """Top hubs by link count (original baseline)."""
     hubs = []
     for path, node in nodes.items():
+        if not isinstance(node, dict):
+            continue
         total = len(node.get("links_to", [])) + len(node.get("linked_from", []))
         if total >= 10 and not path.endswith("_index.md") and path != "index.md":
             hubs.append((total, node.get("title", ""), path))
@@ -70,6 +72,8 @@ def get_topic_matches(nodes: dict, topics: set[str], exclude: set[str], limit: i
     matched = []
     for path, node in nodes.items():
         if path in exclude:
+            continue
+        if not isinstance(node, dict):
             continue
         slug = path.lower()
         title = node.get("title", "").lower()

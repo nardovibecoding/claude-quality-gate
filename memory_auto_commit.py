@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: memory_auto_commit
+# fires_on: Stop
+# always_fire: true
+# cost_score: 2
 # Copyright (c) 2026 Nardo (nardovibecoding). AGPL-3.0 — see LICENSE
 """Stop hook: git commit + push memory to self-hosted bare repos at session end.
 

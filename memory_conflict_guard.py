@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: memory_conflict_guard
+# fires_on: PostToolUse|PreToolUse
+# always_fire: true
+# cost_score: 1
 """Git-style conflict detection + 3-way merge for memory files.
 
 Two modes (same file, registered on both events):

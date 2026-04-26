@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: session_start_pending_save
+# fires_on: UserPromptSubmit|SessionStart
+# always_fire: true
+# cost_score: 1
 """SessionStart/UserPromptSubmit: surface pending deferred-saves.
 
 Reads /tmp/pending_saves/*.json written by session_end_logger.sh.

@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: vps_setup_guard
+# fires_on: PreToolUse
+# relevant_intents: [vps, sync]
+# irrelevant_intents: [bigd, pm, telegram, docx, x_tweet, git, code, memory, debug]
+# cost_score: 1
+# always_fire: false
 # Copyright (c) 2026 Nardo (nardovibecoding). AGPL-3.0 — see LICENSE
 """PreToolUse hook: warn when attempting complex inline SSH commands.
 
@@ -53,4 +60,16 @@ def action(_tool_name, tool_input, _input_data):
 
 
 if __name__ == "__main__":
+    import io
+    import json
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     run_hook(check, action, "vps_setup_guard")

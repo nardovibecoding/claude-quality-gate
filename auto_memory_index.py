@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: auto_memory_index
+# fires_on: PostToolUse
+# relevant_intents: [memory, meta]
+# irrelevant_intents: [bigd, pm, telegram, docx, x_tweet, git, code, vps, sync, debug]
+# cost_score: 1
+# always_fire: false
 """PostToolUse hook: check if new memory file is in MEMORY.md index."""
+import io
+import json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
@@ -34,4 +43,14 @@ def action(tool_name, tool_input, input_data):
 
 
 if __name__ == "__main__":
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     run_hook(check, action, "auto_memory_index")

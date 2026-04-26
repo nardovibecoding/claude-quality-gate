@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: telemetry_tap
+# fires_on: UserPromptSubmit|SessionStart|PreToolUse|PostToolUse|Stop
+# always_fire: true
+# cost_score: 1
 """Telemetry tap: registered on UserPromptSubmit, SessionStart, PreToolUse,
 PostToolUse, Stop. Reads stdin event, appends 1 row to prompt_events.jsonl.
 

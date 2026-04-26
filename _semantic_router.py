@@ -92,6 +92,31 @@ INTENT_KEYWORDS: dict[str, list[str]] = {
         "sync", "rsync", "git pull", "git push", "vps sync",
         "pm sync", "deploy",
     ],
+    "recall": [
+        "are we using", "do we have", "do we use", "did we",
+        "have we tried", "have we used", "have we installed", "have we set up",
+        "remember when", "do you remember", "didn't we", "wasn't that",
+        "weren't we", "last time we", "before we", "previously",
+        "already have", "already using", "already installed", "already set up",
+        "already tried", "we using", "we have", "using this already",
+        "have this already", "is x wired", "are we shipped", "are we running",
+        "what's our", "how did we", "where did we",
+    ],
+    "debug_round": [
+        "round 1", "round 2", "round 3", "round 4", "round 5", "round n",
+        "already tried", "already ruled out", "already tested", "already debugged",
+        "already proved", "already disproved", "previously tried", "previously tested",
+        "tried that", "tried already", "tried before", "n>1 rounds",
+        "fresh eyes", "deeper audit", "mystery", "still broken",
+        "tried again", "tried this already",
+    ],
+    "concept_search": [
+        "you told me", "i told you", "we discussed", "yesterday you",
+        "yesterday we", "we have a doc", "i remember you said",
+        "you said yesterday", "remember i said", "remember you",
+        "u told me", "u said", "earlier you", "earlier we",
+        "i remmebner", "i remmeber", "i rmemeber",
+    ],
 }
 
 # ---------------------------------------------------------------------------
