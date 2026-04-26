@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: agent_simplicity_guard
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """PreToolUse hook: default all agents to Haiku unless task needs Sonnet+.
 Rule: everything is Haiku unless explicitly complex (r1a, implement, debug, refactor)."""
 import json

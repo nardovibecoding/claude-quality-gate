@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: auto_review_before_done
+# fires_on: Stop
+# always_fire: true
+# cost_score: 2
 # Copyright (c) 2026 Nardo (<github-user>). AGPL-3.0 — see LICENSE
 """
 auto_review_before_done.py — Stop hook

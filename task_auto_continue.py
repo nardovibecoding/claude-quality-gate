@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: task_auto_continue
+# fires_on: TaskCompleted
+# always_fire: true
+# cost_score: 1
 """TaskCompleted hook: nudge Claude to continue with next unblocked task."""
 import json
 import sys

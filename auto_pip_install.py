@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: auto_pip_install
+# fires_on: PostToolUse
+# relevant_intents: [code, vps]
+# irrelevant_intents: [bigd, pm, telegram, docx, x_tweet, git, memory, sync, debug]
+# cost_score: 3
+# always_fire: false
 # Copyright (c) 2026 Nardo (nardovibecoding). AGPL-3.0 — see LICENSE
 """PostToolUse hook: auto pip install on VPS after requirements.txt edit.
 Includes .pth supply-chain attack scan after install."""
+import io
+import json
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 from hook_base import run_hook, ssh_cmd
@@ -69,4 +78,14 @@ def action(tool_name, tool_input, input_data):
 
 
 if __name__ == "__main__":
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     run_hook(check, action, "auto_pip_install")

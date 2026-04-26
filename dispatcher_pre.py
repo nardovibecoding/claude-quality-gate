@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: dispatcher_pre
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """Single dispatcher for all PreToolUse hooks (project + global).
 
 Routes by tool_name so only relevant hooks run. Replaces ~15 separate python3 spawns.

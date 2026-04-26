@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: file_lock
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """PreToolUse hook: file lock — prevents two agents from editing the same file simultaneously.
 
 Uses /tmp/claude_file_locks/ directory. Each lock file contains the PID + timestamp.

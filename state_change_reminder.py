@@ -39,15 +39,10 @@ def main():
 
     files_list = "\n".join(f"  - {f}" for f in files)
     msg = (
-        "STATE-CHANGE ENFORCEMENT:\n"
-        f"Files edited that impact live state:\n{files_list}\n"
-        "Before responding to user, update the LATEST STATE block of the "
-        "corresponding memory/wiki file (glob by system name in "
-        "~/NardoWorld/ and ~/.claude/projects/-Users-bernard/memory/).\n"
-        "Spec: ~/NardoWorld/meta/latest_state_spec.md\n"
-        "Rules: tag frontmatter has_state: true, state_updated: today, "
-        "move old state to ## State history as dated delta. "
-        "Include runnable verify: cmd."
+        "State changes auto-batched on session Stop. "
+        f"Pending files:\n{files_list}\n"
+        "See ~/NardoWorld/meta/state_change_inbox.jsonl for queued entries. "
+        "No manual update needed."
     )
 
     out = {

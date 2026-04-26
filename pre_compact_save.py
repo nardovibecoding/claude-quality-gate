@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: pre_compact_save
+# fires_on: PreCompact
+# always_fire: true
+# cost_score: 1
 """PreCompact hook: save transcript + remind to /s before compaction."""
 import json
 import os

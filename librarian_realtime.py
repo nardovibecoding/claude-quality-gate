@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: librarian_realtime
+# fires_on: Stop
+# always_fire: true
+# cost_score: 1
 """Stop hook: nudge Claude to file anything worth keeping to NardoWorld.
 
 Fires after Claude's full response so it can capture atoms from the

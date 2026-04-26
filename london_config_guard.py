@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: london_config_guard
+# fires_on: PreToolUse
+# relevant_intents: [pm, vps, sync]
+# irrelevant_intents: [bigd, telegram, docx, x_tweet, git, code, memory, debug]
+# cost_score: 1
+# always_fire: false
 """London config guard — PreToolUse hook (Edit/Write).
 
 Blocks edits to config.london.json that would ENABLE any streaming/discovery
@@ -88,4 +95,16 @@ def main():
 
 
 if __name__ == "__main__":
+    import io
+    sys.path.insert(0, os.path.dirname(__file__))
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     main()

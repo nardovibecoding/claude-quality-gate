@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: remind to run content-humanizer after creating content."""
+# @bigd-hook-meta
+# name: gmail_humanizer
+# fires_on: PostToolUse
+# relevant_intents: [telegram, docx]
+# irrelevant_intents: [bigd, pm, git, code, vps, sync, memory, debug]
+# cost_score: 1
+# always_fire: false
+"""PostToolUse hook: remind to run content-humanizer after creating Gmail drafts."""
+import io
 import json
+import os
 import sys
-
-
-DOCX_TRIGGERS = (".docx",)
-
-TOOL_TRIGGERS = {
-    "mcp__claude_ai_Gmail__gmail_create_draft": "Gmail draft",
-    "mcp__plugin_telegram_telegram__reply": "Telegram reply",
-    "mcp__plugin_telegram_telegram__edit_message": "Telegram message",
-}
 
 
 def main():
@@ -21,35 +21,30 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_input = input_data.get("tool_input", {})
 
-    # Check MCP tool triggers
-    if tool_name in TOOL_TRIGGERS:
-        label = TOOL_TRIGGERS[tool_name]
-        print(json.dumps({
-            "additionalContext": (
-                f"📝 {label} created. Auto-humanize before sending: "
-                "remove AI patterns (delve, crucial, leverage, robust, insofar as, furthermore). "
-                "Short punchy sentences. Real voice. No em-dash overuse."
-            )
-        }))
+    if tool_name != "mcp__claude_ai_Gmail__gmail_create_draft":
+        print("{}")
         return
 
-    # Check Write tool for .docx files
-    if tool_name == "Write":
-        file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
-        if any(file_path.endswith(ext) for ext in DOCX_TRIGGERS):
-            print(json.dumps({
-                "additionalContext": (
-                    "📝 Docx written. Auto-humanize content: "
-                    "remove AI patterns, vary sentence rhythm, keep technical precision. "
-                    "Run /content-humanizer if not already done."
-                )
-            }))
-            return
-
-    print("{}")
+    print(json.dumps({
+        "systemMessage": (
+            "📝 **Gmail draft created.** Run content-humanizer on the draft body before sending. "
+            "Remove AI patterns: delve, crucial, leverage, navigate, robust. "
+            "Add personality and real voice."
+        )
+    }))
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(__file__))
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = io.StringIO(_raw)
     main()

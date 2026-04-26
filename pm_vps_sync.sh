@@ -19,6 +19,14 @@ if [[ "$FILE" != *"prediction-markets"* ]]; then
   exit 0
 fi
 
+# /ship LOCK gate: if any .ship/*/LOCK file exists, a slice is in progress;
+# skip auto-commit so slices can land as clean individual commits.
+# Added 2026-04-24 after S1+S2 landed mixed in a single auto-sync commit.
+if ls "$PM_LOCAL/.ship"/*/LOCK 2>/dev/null | head -1 > /dev/null; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip: /ship slice active (LOCK present)" >> "$LOGFILE"
+  exit 0
+fi
+
 touch "$TOUCHFILE"
 
 if [[ -f "$WATCHER_PID_FILE" ]] && kill -0 "$(cat "$WATCHER_PID_FILE")" 2>/dev/null; then
@@ -116,9 +124,9 @@ fi
     HEL_CMD="${HEL_CMD//%RESTART_CMD%/sudo systemctl restart pm-bot}"
     $SSH "$HEL_CMD" >> "$LOGFILE" 2>&1
 
-    VULTR_SSH="ssh -o ConnectTimeout=5 root@78.141.205.30"
-    VULTR_CMD="${BUILD_RESTART//%REMOTE%//root/prediction-markets}"
-    VULTR_CMD="${VULTR_CMD//%RESTART_CMD%/systemctl restart pm-bot}"
+    VULTR_SSH="ssh -o ConnectTimeout=5 london"
+    VULTR_CMD="${BUILD_RESTART//%REMOTE%//home/pm/prediction-markets}"
+    VULTR_CMD="${VULTR_CMD//%RESTART_CMD%/sudo systemctl restart pm-bot}"
     $VULTR_SSH "$VULTR_CMD" >> "$LOGFILE" 2>&1
 
     echo "$(date): debounced git-sync + rebuilt + restarted (waited ${DEBOUNCE}s)" >> "$LOGFILE"

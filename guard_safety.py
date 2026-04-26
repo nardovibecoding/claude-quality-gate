@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: guard_safety
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 # Copyright (c) 2026 Nardo (nardovibecoding). AGPL-3.0 — see LICENSE
 """PreToolUse hook: block destructive ops, VPS direct access, hook tampering, credential reads, git hook bypass, branch creation."""
 import re

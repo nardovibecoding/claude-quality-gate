@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: auto_save_inject
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """PreToolUse hook: inject auto-save when marker file exists.
 
 Reads /tmp/claude_auto_save_needed (written by context_50_check.py).

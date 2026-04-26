@@ -2,10 +2,10 @@
 # @bigd-hook-meta
 # name: concept_search_reminder
 # fires_on: UserPromptSubmit
-# relevant_intents: []
+# relevant_intents: [concept_search, memory]
 # irrelevant_intents: []
 # cost_score: 1
-# always_fire: true
+# always_fire: false
 """
 concept_search_reminder.py -- UserPromptSubmit hook (additive).
 

@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: doc_staleness_guard
+# fires_on: PostToolUse
+# relevant_intents: [meta, memory]
+# irrelevant_intents: [bigd, pm, telegram, docx, x_tweet, git, code, vps, sync, debug]
+# cost_score: 1
+# always_fire: false
 """PostToolUse Read hook: warn when a doc has referenced files newer than its verified_at.
 
 Opt-in: docs must have frontmatter with `verified_at: YYYY-MM-DD` and `documents: [path, ...]`.
@@ -113,8 +120,17 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys as _sys
-    from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).parent))
+    import io as _io
+    _raw = sys.stdin.read()
+    try:
+        _prompt = json.loads(_raw).get("prompt", "") if _raw else ""
+    except Exception:
+        _prompt = ""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from _semantic_router import should_fire
+    if not should_fire(__file__, _prompt):
+        print("{}")
+        sys.exit(0)
+    sys.stdin = _io.StringIO(_raw)
     from _safe_hook import safe_run
     safe_run(main, "doc_staleness_guard")

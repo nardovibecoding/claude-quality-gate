@@ -2,10 +2,10 @@
 # @bigd-hook-meta
 # name: memory_recall_hook
 # fires_on: UserPromptSubmit
-# relevant_intents: []
+# relevant_intents: [recall, memory]
 # irrelevant_intents: []
 # cost_score: 1
-# always_fire: true
+# always_fire: false
 """UserPromptSubmit hook: remind Claude to check memory for recall-type questions."""
 import io
 import json

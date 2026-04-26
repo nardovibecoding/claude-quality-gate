@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: agent_cascade_guard
+# fires_on: PreToolUse
+# always_fire: true
+# cost_score: 1
 """PreToolUse hook: prevent agent cascade (agents spawning agents).
 Checks CLAUDE_AGENT_DEPTH env var and session context to detect sub-agent spawns."""
 import json

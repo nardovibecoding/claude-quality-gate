@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: story_detector
+# fires_on: Stop
+# always_fire: true
+# cost_score: 1
 """Stop hook: detect story-worthy sessions via passive signals + write draft."""
 import json
 import re

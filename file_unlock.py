@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: file_unlock
+# fires_on: PostToolUse
+# always_fire: true
+# cost_score: 1
 """PostToolUse hook: release file lock after Edit/Write completes."""
 import json
 import os

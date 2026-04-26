@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @bigd-hook-meta
+# name: memory_inject_reset
+# fires_on: SessionStart
+# always_fire: true
+# cost_score: 1
 """SessionStart hook: reset memory inject state so fresh injection happens."""
 import os
 from pathlib import Path
