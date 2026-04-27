@@ -4,6 +4,14 @@
 claude plugins install nardovibecoding/simply-quality-gate
 ```
 
+**OR install without Claude Code plugin manager:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nardovibecoding/simply-quality-gate/main/install.sh | bash
+```
+
+This copies hooks to `~/.claude/hooks/` and merges hook entries into `~/.claude/settings.json` (idempotent — safe to re-run).
+
 ---
 
 <div align="center">
