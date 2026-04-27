@@ -134,11 +134,26 @@ def main() -> int:
 
     log(f"[{label}] committed {rel}")
 
-    # Async push: fire-and-forget; don't block tool.
+    # L3 breaker: skip push if repo is currently tripped.
+    breaker = "/Users/bernard/.claude/scripts/sync_breaker.py"
+    repo_str = str(repo_root)
+    tripped = run(["python3", breaker, "check", repo_str], repo_root)
+    if tripped.returncode != 0:
+        log(f"[{label}] SKIP push — breaker TRIPPED (run sync_breaker.py reset to clear)")
+        return 0
+
+    # Async push: fire-and-forget; record success/failure for the breaker.
     push_log = f"/tmp/l1_push_{label}.log"
+    cmd = (
+        f"if git push origin main >> {push_log} 2>&1; then "
+        f"  python3 {breaker} success {repo_str!r} >/dev/null; "
+        f"else "
+        f"  python3 {breaker} failure {repo_str!r} >> {push_log} 2>&1; "
+        f"fi"
+    )
     try:
         subprocess.Popen(
-            f"git push origin main >> {push_log} 2>&1",
+            cmd,
             shell=True,
             cwd=str(repo_root),
             start_new_session=True,
