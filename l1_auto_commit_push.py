@@ -164,7 +164,8 @@ def main() -> int:
     # github.com remotes; non-github remotes (Hel/London bare) bypass scan.
     # Breaker success/failure recorded inside gated_push.
     push_log = f"/tmp/l1_push_{label}.log"
-    cmd = f"python3 {gate} {repo_str!r} main >> {push_log} 2>&1"
+    # No branch arg — gated_push.py auto-detects current HEAD's branch.
+    cmd = f"python3 {gate} {repo_str!r} >> {push_log} 2>&1"
     try:
         subprocess.Popen(
             cmd,
