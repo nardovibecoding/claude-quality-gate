@@ -55,7 +55,8 @@ def main() -> int:
         return 0
 
     cmd = payload.get("tool_input", {}).get("command", "") or ""
-    if "git push" not in cmd:
+    # Match `git push`, `git -C <path> push`, `git --git-dir=... push`, etc.
+    if not re.search(r"\bgit\b(\s+-\S+(\s+\S+)?)*\s+push\b", cmd):
         return 0
     if str(GATE) in cmd:
         # Already routed through the gate — let it through.
