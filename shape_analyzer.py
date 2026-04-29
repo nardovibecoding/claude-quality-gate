@@ -154,30 +154,43 @@ def ap_desc(ap):
     }.get(ap, "unknown")
 
 
-def write_proposals(signal_counts, corr):
-    total_shapes = sum(signal_counts.values())
+def write_proposals(total_counts, fresh_counts, corr, fresh_n, reviewed_n, reviewed_at):
+    total_shapes = sum(total_counts.values())
     ready = []
     below = []
+    # Per-pattern roll-up across all negative signals (combined gate)
+    pattern_total = Counter()
     for sig in NEGATIVE_SIGNALS:
-        sig_total = signal_counts.get(sig, 0)
+        sig_total = fresh_counts.get(sig, 0)
         for ap, count in sorted(corr[sig].items(), key=lambda x: -x[1]):
+            pattern_total[ap] += count
             if count >= N_SHAPE:
                 ready.append(render_proposal(sig, ap, count, sig_total))
             else:
                 below.append((sig, ap, count))
 
+    cutoff_line = (
+        f"Reviewed cutoff: {reviewed_at} ({reviewed_n} events archived, {fresh_n} fresh)\n"
+        if reviewed_at else f"Reviewed cutoff: _none set_ (all {fresh_n} events fresh)\n"
+    )
     header = (
         f"# Shape Proposals\n\n"
         f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}  \n"
-        f"Source: `~/NardoWorld/meta/response_shape.jsonl` ({total_shapes} events)  \n"
+        f"Source: `~/NardoWorld/meta/response_shape.jsonl` ({total_shapes} events total)  \n"
+        f"{cutoff_line}"
         f"Analyzer: v{ANALYZER_VERSION}  \n"
-        f"Gate: N_SHAPE={N_SHAPE} (frequency required before proposing a rule)\n\n"
+        f"Gate: N_SHAPE={N_SHAPE} per (signal × pattern); fresh-events only\n\n"
         f"**⚠️  NEVER auto-applied. Bernard reviews + manually edits CLAUDE.md.**\n\n"
-        f"## Signal counts\n\n"
+        f"## Fresh signal counts (post-cutoff)\n\n"
     )
-    for sig, c in signal_counts.most_common():
+    for sig, c in fresh_counts.most_common():
         flag = "NEG" if sig in NEGATIVE_SIGNALS else "pos"
         header += f"- `{sig}` ({flag}): {c}\n"
+    if pattern_total:
+        header += f"\n## Per-pattern roll-up (any neg signal)\n\n"
+        for ap, c in sorted(pattern_total.items(), key=lambda x: -x[1]):
+            flag = " ✓" if c >= N_SHAPE else ""
+            header += f"- `{ap}`: {c}{flag}\n"
     header += f"\n## Proposals ≥ N_SHAPE (ready for review: {len(ready)})\n\n"
 
     body = "".join(ready) if ready else "_No correlations have crossed the N_SHAPE threshold yet._\n\n"
