@@ -672,6 +672,9 @@ def _format_bundle_digest(bundle: dict) -> str:
         f"IMPORTANT: Before presenting the queue, emit a verdict JSON for bundle_id={bundle_id!r} "
         "via bigd._lib.verdict.write_verdict() -- call write_verdict(bundle_id, decisions) where "
         "decisions maps each action id to APPROVED/DEFERRED/SKIPPED based on user input. "
+        "For carry-forward items (numbered after today's actions), set decision.provenance = "
+        "{from_carried_forward: true, carried_from: '<YYYY-MM-DD>'} in the verdict decision. "
+        "RECURRING carry-forward items (tagged [REC]) are NOT numbered — skip them entirely. "
         "Present each escalated action as a numbered approval item to Bernard.]"
     )
 
