@@ -21,10 +21,12 @@ from typing import Final
 # Word-boundaries on every regex to avoid substring FPs ("hel" matching "hello").
 CUBE_ANCHORS: Final[dict[str, list[str]]] = {
     "pm-bot":         [r"\bkalshi\b", r"\bpolymarket\b", r"\bmanifold\b", r"\bpm[- ]?bot\b",
-                       r"\bprediction[- ]?market", r"\bpm[- ]session\b", r"\bpm[- ]pipeline\b",
-                       r"\bpm[- ]eval\b", r"\bpm[- ]strategy", r"\bpm[- ]strategies\b",
-                       r"\bpm[- ]dashboard\b", r"\bpm[- ]orderbook\b", r"\bpm[- ]epoch\b",
-                       r"\bpm[- ]launchd\b", r"\bpm[- ]exchange\b", r"\bpm[- ]whale\b"],
+                       r"\bprediction[- ]?market",
+                       # pm- prefix compounds; trailing \b dropped so "pm-session40" matches
+                       r"\bpm[- ]session", r"\bpm[- ]pipeline", r"\bpm[- ]eval",
+                       r"\bpm[- ]strateg", r"\bpm[- ]dashboard", r"\bpm[- ]orderbook",
+                       r"\bpm[- ]epoch", r"\bpm[- ]launchd", r"\bpm[- ]exchange",
+                       r"\bpm[- ]whale", r"\bmm[- ]rebuild", r"\bmm[- ]live"],
     "vibe-island":    [r"\bvibe[- ]?island\b", r"\bvibeisland\b"],
     "dagou":          [r"\bdagou\b"],
     "codex":          [r"\bcodex\b"],
