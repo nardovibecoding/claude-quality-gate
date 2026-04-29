@@ -45,15 +45,20 @@ CUBE_CONTEXT: Final[dict[str, list[str]]] = {
         r"\bhel\b", r"\blondon\b", r"\bsignal[- ]?trace\b", r"\btrade[- ]?journal\b",
         r"\bbasket[- ]?atomicity\b", r"\bfast[- ]?loop\b", r"\bclob[- ]?stream\b",
         r"\bwhale[- ]?scan\b", r"\borderhash\b", r"\bkmm\b", r"\bsy[- ]?replies\b",
+        # broad pm- prefix (≥3-char suffix) catches pm-watchdog, pm-local, etc.
+        r"\bpm[- ]\w{3,}", r"\bmm[- ]\w{3,}", r"\bmac[- ]hel\b",
+        r"\blaunchagent[- ]london\b", r"\bfail2ban[- ]openssh\b",
     ],
     "vibe-island": [
         r"\bswiftui\b", r"\bxctest\b", r"\bsnapshot[- ]?test", r"\bmac[- ]?app\b",
         r"\bdashboard[- ]?mac\b", r"\b\.app\b", r"\blaunchagent\b",
-        r"\bnard[- ]?cli\b", r"\bnardostick\b",
+        r"\bnard[- ]?cli\b", r"\bnardostick\b", r"\bnardostack\b",
     ],
     "dagou": [
         r"\bkol\b", r"\bbsc\b", r"\bbnb\b", r"\bs5\b", r"\bwallet[- ]?harvester\b",
         r"\bspoofer[- ]?discover", r"\bbuild[- ]?unified[- ]?profile\b",
+        r"\bwhale[- ]db\b", r"\bwhale[- ]copy\b", r"\bwhale[- ]intel\b",
+        r"\bpublicnode\b",
     ],
     "codex": [
         r"\bcodex[- ]?hooks\b", r"\bcodex[- ]?migration\b", r"\bcodex[- ]?prep\b",
@@ -63,6 +68,9 @@ CUBE_CONTEXT: Final[dict[str, list[str]]] = {
         r"\bskill[- ]?loader\b", r"\bUserPromptSubmit\b", r"\bPreToolUse\b",
         r"\bPostToolUse\b", r"\bevidence[- ]?guard\b",
         r"\blaunchagent[- ]?dup\b", r"\bcontext[- ]?50[- ]?check\b",
+        # broad hook-/skill- compounds (claude infra)
+        r"\bhook[- ]\w{3,}", r"\bstop[- ]hook\b", r"\bskill[- ]\w{3,}",
+        r"\bconsolidation[- ]over[- ]sprawl",
     ],
 }
 
