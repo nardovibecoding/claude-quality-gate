@@ -32,7 +32,12 @@ CUBE_ANCHORS: Final[dict[str, list[str]]] = {
     "codex":          [r"\bcodex\b"],
     "claude-harness": [r"\bclaude[- ]?code\b", r"\bclaude\.md\b", r"\bsemantic[- ]?router\b",
                        r"\bsettings\.json\b", r"\bship\.md\b", r"\bbigd\b",
-                       r"\b/ship\b", r"\b/debug\b", r"\b/recall\b", r"\b/snap\b", r"\b/daemons\b"],
+                       r"\b/ship\b", r"\b/debug\b", r"\b/recall\b", r"\b/snap\b", r"\b/daemons\b",
+                       # known X-skill compound names + claude infra phrases
+                       r"\blint[- ]skill\b", r"\bship[- ]skill\b", r"\bdebug[- ]skill\b",
+                       r"\bgithub[- ]audit\b", r"\bhook[- ]consolidation\b",
+                       r"\bauto[- ]context\b", r"\bauto[- ]clear\b", r"\bauto[- ]recall\b",
+                       r"\bcontext[- ]exit\b", r"\bclaude[- ]harness\b"],
 }
 
 CUBE_CONTEXT: Final[dict[str, list[str]]] = {
