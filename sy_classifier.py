@@ -123,7 +123,6 @@ def evaluate():
     pairs = [json.loads(l) for l in open(PAIRS_FILE) if l.strip()]
     decided = [p for p in pairs if p.get("signal") in ("accept", "clarify", "reject")]
 
-    tp = fp = fn = tn = 0
     auto_go_correct = auto_go_wrong = 0
     auto_go_decisions = 0
     by_action = {"auto_go": [0, 0, 0], "ask_normally": [0, 0, 0], "extra_caution": [0, 0, 0]}
