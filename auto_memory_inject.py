@@ -153,26 +153,44 @@ def _log_retrieval(method, query_tokens, result_count):
         pass
 
 
-def _search_mjs(raw_prompt):
+def _cube_weights(cube):
+    """Load per-cube RRF weights for `cube`. Returns dict or None."""
+    if not cube or cube == "general":
+        return None
+    if not CUBE_WEIGHTS_FILE.exists():
+        return None
+    try:
+        all_w = json.loads(CUBE_WEIGHTS_FILE.read_text())
+        w = all_w.get(cube)
+        if not isinstance(w, dict):
+            return None
+        # strip _intent / underscored doc keys; keep numeric axes only
+        return {k: v for k, v in w.items() if not k.startswith("_") and isinstance(v, (int, float))}
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _search_mjs(raw_prompt, cube=None):
     """Invoke search.mjs with 4s timeout. Returns list of result dicts or None on failure.
 
     Flags: --no-rerank --no-hyde --no-prf to minimize latency, --no-log to avoid
     double-writing feedback (manual /recall still writes feedback normally).
+    `cube` (optional): when set, loads per-cube weights and passes via --weights.
     Returns None on timeout, subprocess error, or empty results.
     """
     if not SEARCH_MJS.exists():
         return None
+    cmd = [
+        "node", str(SEARCH_MJS),
+        raw_prompt.strip(),
+        "--json", "--no-rerank", "--no-hyde", "--no-prf", "--no-log",
+    ]
+    weights = _cube_weights(cube)
+    if weights:
+        cmd += ["--weights", json.dumps(weights)]
     try:
         proc = subprocess.run(
-            [
-                "node", str(SEARCH_MJS),
-                raw_prompt.strip(),
-                "--json",
-                "--no-rerank",
-                "--no-hyde",
-                "--no-prf",
-                "--no-log",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=SEARCH_TIMEOUT,
