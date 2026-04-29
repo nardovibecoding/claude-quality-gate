@@ -160,12 +160,38 @@ def main() -> int:
         log(f"[{label}] SKIP push — breaker TRIPPED (run sync_breaker.py reset to clear)")
         return 0
 
+    # Anti-stampede: skip push if another L1 push for this repo is in flight.
+    # Prevents the racing-push problem when many edits happen quickly + each
+    # spawns its own gated_push, all fighting over the same remote
+    # (esp. expensive when remote is slow/transcontinental like Vultr-London).
+    # Lock file: /tmp/l1_push_<label>.lock — Popen-side touches+removes.
+    lock_path = Path(f"/tmp/l1_push_{label}.lock")
+    if lock_path.exists():
+        # Stale-lock guard: ignore lock older than 600s (push hung/crashed).
+        try:
+            age = time.time() - lock_path.stat().st_mtime
+        except Exception:
+            age = 0
+        if age < 600:
+            log(f"[{label}] SKIP push — another L1 push in flight (lock age {age:.0f}s)")
+            return 0
+        log(f"[{label}] removing stale lock (age {age:.0f}s)")
+        try:
+            lock_path.unlink()
+        except Exception:
+            pass
+
     # Async gated push: scans diff for credential leaks before pushing to
     # github.com remotes; non-github remotes (Hel/London bare) bypass scan.
     # Breaker success/failure recorded inside gated_push.
     push_log = f"/tmp/l1_push_{label}.log"
-    # No branch arg — gated_push.py auto-detects current HEAD's branch.
-    cmd = f"python3 {gate} {repo_str!r} >> {push_log} 2>&1"
+    # Wrap with lock-file create+remove so subsequent L1 invocations can detect.
+    # `trap` ensures lock is cleared even if push fails or is killed.
+    cmd = (
+        f"trap 'rm -f {lock_path}' EXIT; "
+        f"touch {lock_path}; "
+        f"python3 {gate} {repo_str!r} >> {push_log} 2>&1"
+    )
     try:
         subprocess.Popen(
             cmd,
