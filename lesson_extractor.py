@@ -97,7 +97,7 @@ SHAPE_PATTERNS = [
     ("dismissal",     re.compile(r"^(skip|not now|maybe later|no thanks|ignore)\b", re.IGNORECASE)),
     ("satisfaction",  re.compile(r"\b(perfect|exactly|that'?s? it|love it|nailed it)\b", re.IGNORECASE)),
     ("elaboration",   re.compile(r"^(also\b|additionally\b|and what about|one more|on top of)", re.IGNORECASE)),
-    ("ack",           re.compile(r"^(ok|okay|got it|yes|sy|lets go|let'?s go|alright|makes sense|understood)\b", re.IGNORECASE)),
+    ("ack",           re.compile(r"^(ok|okay|got it|yes|sy|lets go|let'?s go|alright|makes sense|understood|o\d+|\d{1,2})\b", re.IGNORECASE)),
 ]
 
 def classify_shape(user_text):
