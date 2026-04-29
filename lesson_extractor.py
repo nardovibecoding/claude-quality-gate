@@ -46,7 +46,7 @@ ACCEPT_RE = re.compile(
     re.IGNORECASE
 )
 REJECT_RE = re.compile(
-    r'^(no[,\s]|nah|sn|not now|skip|maybe later|no thanks|ignore|stop|hold|wait'
+    r'^(no[,\s]|nah|sn|not now|skip|maybe later|no thanks|ignore|stop'
     r'|don\'?t|disagree|that\'?s wrong|wrong|incorrect|actually|nope)',
     re.IGNORECASE
 )
