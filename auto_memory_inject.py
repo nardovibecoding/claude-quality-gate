@@ -112,13 +112,20 @@ def _handle_prompt(prompt):
 
     tokens = _tokenize(prompt)
     trivial = _is_trivial_prompt(prompt, tokens)
-    # Store raw_prompt for search.mjs query; tokens for BM25 fallback
+    cube = _classify_cube(prompt)
+    # Store raw_prompt for search.mjs query; tokens for BM25 fallback; cube for RRF bias
     _marker_path().write_text(json.dumps({
         "tokens": tokens[:30],
         "raw_prompt": prompt[:300],
         "trivial": trivial,
+        "cube": cube,
     }))
-    _log(HOOK_NAME, f"marker written ({len(tokens)} tokens, trivial={trivial})")
+    # Side-channel for any external consumer that wants just the cube
+    try:
+        Path(f"/tmp/recall_cube_{_tty()}.txt").write_text(cube)
+    except OSError:
+        pass
+    _log(HOOK_NAME, f"marker written ({len(tokens)} tokens, trivial={trivial}, cube={cube})")
 
     print("{}")
 
