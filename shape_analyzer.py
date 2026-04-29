@@ -73,17 +73,47 @@ def detect_antipatterns(text):
     return hits
 
 
-def analyze(shapes):
-    signal_counts = Counter()
+def load_cutoff():
+    if not CUTOFF_FILE.exists():
+        return 0, None
+    try:
+        d = json.loads(CUTOFF_FILE.read_text())
+        return int(d.get("cutoff_ts", 0)), d.get("reviewed_at")
+    except Exception:
+        return 0, None
+
+
+def write_cutoff(cutoff_ts):
+    NARDO_META.mkdir(parents=True, exist_ok=True)
+    CUTOFF_FILE.write_text(json.dumps({
+        "cutoff_ts": int(cutoff_ts),
+        "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }, indent=2))
+
+
+def analyze(shapes, cutoff_ts=0):
+    """
+    Return (total_signal_counts, fresh_signal_counts, fresh_corr, fresh_count, reviewed_count).
+    Anti-pattern correlations only count events with ts > cutoff_ts.
+    """
+    total_counts = Counter()
+    fresh_counts = Counter()
     corr = defaultdict(Counter)
+    fresh_n = reviewed_n = 0
     for s in shapes:
         sig = s.get("signal_type", "")
-        signal_counts[sig] += 1
+        total_counts[sig] += 1
+        ts = int(s.get("ts", 0))
+        if ts <= cutoff_ts:
+            reviewed_n += 1
+            continue
+        fresh_n += 1
+        fresh_counts[sig] += 1
         if sig not in NEGATIVE_SIGNALS:
             continue
         for ap in detect_antipatterns(s.get("preceding_assistant_snippet", "")):
             corr[sig][ap] += 1
-    return signal_counts, corr
+    return total_counts, fresh_counts, corr, fresh_n, reviewed_n
 
 
 def render_proposal(sig, ap, count, total_neg):
