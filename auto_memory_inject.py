@@ -221,6 +221,7 @@ def _handle_tool():
     query_tokens = []
     raw_prompt = ""
     is_trivial = True
+    cube = "general"
     lines = []
 
     if has_marker:
@@ -229,6 +230,7 @@ def _handle_tool():
             query_tokens = data.get("tokens", [])
             raw_prompt = data.get("raw_prompt", "")
             is_trivial = data.get("trivial", True)
+            cube = data.get("cube", "general")
         except (json.JSONDecodeError, OSError):
             pass
         marker.unlink(missing_ok=True)
@@ -238,10 +240,10 @@ def _handle_tool():
     if query_tokens:
         injected = False
 
-        # Path A: search.mjs (non-trivial only, 4s timeout)
+        # Path A: search.mjs (non-trivial only, 4s timeout); cube biases RRF weights
         if not is_trivial:
-            _log(HOOK_NAME, f"trying search.mjs for: {raw_prompt[:60]}")
-            mjs_results = _search_mjs(raw_prompt)
+            _log(HOOK_NAME, f"trying search.mjs for: {raw_prompt[:60]} (cube={cube})")
+            mjs_results = _search_mjs(raw_prompt, cube=cube)
             if mjs_results:
                 mem_lines = ["Relevant memories auto-loaded (search.mjs):"]
                 for r in mjs_results[:MAX_INJECT]:
