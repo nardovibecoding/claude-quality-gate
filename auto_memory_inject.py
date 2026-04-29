@@ -26,7 +26,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from hook_base import _log
 
+# Cube classifier (optional — fall back gracefully if missing)
+try:
+    from _lib.cube_classifier import classify as _classify_cube
+except Exception:
+    _classify_cube = lambda _: "general"  # noqa: E731
+
 HOOK_NAME = "memory_inject"
+CUBE_WEIGHTS_FILE = Path.home() / ".claude" / ".recall_weights_by_cube.json"
 MEMORY_DIR = Path.home() / ".claude" / "projects" / f"-Users-{Path.home().name}" / "memory"
 STATS_FILE = MEMORY_DIR / "memory_stats.json"
 MARKER_DIR = Path("/tmp/claude_memory_inject")
