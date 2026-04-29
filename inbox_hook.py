@@ -821,12 +821,22 @@ def _format_bundle_digest(bundle: dict) -> str:
                 fid_short = fid[:12] if len(fid) > 12 else fid
                 carry_status = act.get("carry_status", "")
                 from_skipped = act.get("from_skipped_day", False)
-                status_tag = " [REC]" if carry_status == "RECURRING" else ""
+                # RECURRING items: display-only, no approval number (already in today's queue)
+                is_recurring = (carry_status == "RECURRING")
+                status_tag = " [REC]" if is_recurring else ""
                 if from_skipped:
                     status_tag += " [SKIP]"
-                lines.append(
-                    f"    {sev_label} {daemon_host:<18s}  {title[:60]:<60s}  …{fid_short}{status_tag}"
-                )
+                if is_recurring:
+                    # No number — recurring items appear in today's numbered queue already
+                    lines.append(
+                        f"    {sev_label} {daemon_host:<18s}  {title[:60]:<60s}  …{fid_short}{status_tag}"
+                    )
+                else:
+                    # Continue global numbering from today's actions
+                    lines.append(
+                        f"    {num}. {sev_label} {daemon_host:<18s}  {title[:60]:<60s}  …{fid_short}{status_tag}"
+                    )
+                    num += 1
 
     lines += [
         "",
