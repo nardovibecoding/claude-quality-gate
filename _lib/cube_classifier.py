@@ -28,7 +28,7 @@ CUBE_ANCHORS: Final[dict[str, list[str]]] = {
                        r"\bpm[- ]epoch", r"\bpm[- ]launchd", r"\bpm[- ]exchange",
                        r"\bpm[- ]whale", r"\bmm[- ]rebuild", r"\bmm[- ]live"],
     "vibe-island":    [r"\bvibe[- ]?island\b", r"\bvibeisland\b"],
-    "dagou":          [r"\bdagou\b"],
+    "dagou":          [r"\bdagou\b", r"\bspoofer\b", r"\bwallet[- ]?harvester\b"],
     "codex":          [r"\bcodex\b"],
     "claude-harness": [r"\bclaude[- ]?code\b", r"\bclaude\.md\b", r"\bsemantic[- ]?router\b",
                        r"\bsettings\.json\b", r"\bship\.md\b", r"\bbigd\b",
