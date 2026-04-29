@@ -768,6 +768,58 @@ def _format_bundle_digest(bundle: dict) -> str:
                     f"  {health_emoji} {daemon:14s}  findings={findings:<4}  actions={actions}"
                 )
 
+    # CARRIED FORWARD section — unconsumed findings from prior days
+    # Schema: cross_refs.carried_forward = {prior_date: [action, ...]}
+    # Each action is a proposed_action dict annotated with:
+    #   carried_from (str), carry_status ("CARRY_FORWARD" | "RECURRING")
+    # Populated by collector.py _assemble_bundle [cited collector.py:335]
+    _sev_tag = {
+        "CRITICAL": "[CRIT]",
+        "HIGH":     "[HIGH]",
+        "MEDIUM":   "[ MED]",
+        "MED":      "[ MED]",
+        "LOW":      "[ LOW]",
+        "INFO":     "[INFO]",
+    }
+    cross_refs = bundle.get("cross_refs") or {}
+    carried_forward: dict = cross_refs.get("carried_forward") or {}
+    if carried_forward:
+        n_days = len(carried_forward)
+        n_findings = sum(len(v) for v in carried_forward.values())
+        carry_new_count = cross_refs.get("carry_new_count") or 0
+        carry_recurring_count = cross_refs.get("carry_recurring_count") or 0
+        lines.append("")
+        lines.append(
+            f"### \U0001f4e6 CARRIED FORWARD ({n_days} day{'s' if n_days != 1 else ''}, "
+            f"{n_findings} finding{'s' if n_findings != 1 else ''} — "
+            f"{carry_new_count} new, {carry_recurring_count} recurring)"
+        )
+        for prior_date in sorted(carried_forward.keys()):
+            day_actions = carried_forward[prior_date]
+            lines.append(f"  \U0001f4c5 from {prior_date} ({len(day_actions)} finding{'s' if len(day_actions) != 1 else ''})")
+            for act in day_actions:
+                # severity — check 'risk' field (proposed_action schema uses 'risk')
+                risk_raw = (act.get("risk") or "").upper()
+                sev_label = _sev_tag.get(risk_raw, f"[{risk_raw[:4]:4s}]" if risk_raw else "[ ? ]")
+                # daemon@host — from 'id' prefix or direct fields
+                daemon_host = act.get("daemon_host", "")
+                if not daemon_host:
+                    # Try to reconstruct from id: e.g. "lint_mac_20260428_abc123"
+                    act_id = act.get("id") or act.get("finding_id") or ""
+                    parts = act_id.split("_")
+                    if len(parts) >= 2:
+                        daemon_host = f"{parts[0]}@{parts[1]}"
+                    else:
+                        daemon_host = "?@?"
+                title = act.get("title") or "[no title]"
+                fid = act.get("finding_id") or act.get("id") or "?"
+                fid_short = fid[:12] if len(fid) > 12 else fid
+                carry_status = act.get("carry_status", "")
+                status_tag = " [REC]" if carry_status == "RECURRING" else ""
+                lines.append(
+                    f"    {sev_label} {daemon_host:<18s}  {title[:60]:<60s}  …{fid_short}{status_tag}"
+                )
+
     lines += [
         "",
         "## Action codes to reply with:",
