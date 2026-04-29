@@ -776,6 +776,8 @@ def _format_bundle_digest(bundle: dict) -> str:
     # Each action is a proposed_action dict annotated with:
     #   carried_from (str), carry_status ("CARRY_FORWARD" | "RECURRING")
     # Populated by collector.py _assemble_bundle [cited collector.py:335]
+    # Numbering: carry-forward items with carry_status != "RECURRING" continue the
+    # global num counter from today's actions. RECURRING items are display-only (no number).
     _sev_tag = {
         "CRITICAL": "[CRIT]",
         "HIGH":     "[HIGH]",
