@@ -16,39 +16,37 @@ from __future__ import annotations
 import re
 from typing import Final
 
-# Word-boundary regexes per cube. Every keyword wrapped in \b...\b to avoid
-# substring false-positives (e.g. "hel" matching "hello").
-# Tokens chosen to be project-distinctive (no generic "bot", "data", "code").
-CUBE_KEYWORDS: Final[dict[str, list[str]]] = {
+# Per-cube keyword tiers. ANCHOR = project-name or sole-owner token (weight 2),
+# CONTEXT = supporting tokens (weight 1). Anchor matches dominate ties.
+# Word-boundaries on every regex to avoid substring FPs ("hel" matching "hello").
+CUBE_ANCHORS: Final[dict[str, list[str]]] = {
+    "pm-bot":         [r"\bkalshi\b", r"\bpolymarket\b", r"\bmanifold\b", r"\bpm[- ]?bot\b", r"\bprediction[- ]?market"],
+    "vibe-island":    [r"\bvibe[- ]?island\b", r"\bvibeisland\b"],
+    "dagou":          [r"\bdagou\b"],
+    "codex":          [r"\bcodex\b"],
+    "claude-harness": [r"\bclaude[- ]?code\b", r"\bclaude\.md\b", r"\bsemantic[- ]?router\b", r"\bsettings\.json\b"],
+}
+
+CUBE_CONTEXT: Final[dict[str, list[str]]] = {
     "pm-bot": [
-        r"\bkalshi\b", r"\bpolymarket\b", r"\bmanifold\b",
-        r"\bhel\b", r"\blondon\b", r"\bpm[- ]?bot\b",
-        r"\bsignal[- ]?trace\b", r"\btrade[- ]?journal\b",
-        r"\bbasket[- ]?atomicity\b", r"\bfast[- ]?loop\b",
-        r"\bclob[- ]?stream\b", r"\bwhale[- ]?scan\b",
-        r"\bprediction[- ]?market", r"\borderhash\b",
-        r"\bkmm\b", r"\bsy[- ]?replies\b",
+        r"\bhel\b", r"\blondon\b", r"\bsignal[- ]?trace\b", r"\btrade[- ]?journal\b",
+        r"\bbasket[- ]?atomicity\b", r"\bfast[- ]?loop\b", r"\bclob[- ]?stream\b",
+        r"\bwhale[- ]?scan\b", r"\borderhash\b", r"\bkmm\b", r"\bsy[- ]?replies\b",
     ],
     "vibe-island": [
-        r"\bvibe[- ]?island\b", r"\bvibeisland\b",
-        r"\bswiftui\b", r"\bxctest\b", r"\bsnapshot[- ]?test",
-        r"\bmac[- ]?app\b", r"\bdashboard[- ]?mac\b",
-        r"\b\.app\b", r"\blaunchagent\b",
+        r"\bswiftui\b", r"\bxctest\b", r"\bsnapshot[- ]?test", r"\bmac[- ]?app\b",
+        r"\bdashboard[- ]?mac\b", r"\b\.app\b", r"\blaunchagent\b",
         r"\bnard[- ]?cli\b", r"\bnardostick\b",
     ],
     "dagou": [
-        r"\bdagou\b", r"\bkol\b", r"\bbsc\b", r"\bbnb\b",
-        r"\bs5\b", r"\bwallet[- ]?harvester\b",
+        r"\bkol\b", r"\bbsc\b", r"\bbnb\b", r"\bs5\b", r"\bwallet[- ]?harvester\b",
         r"\bspoofer[- ]?discover", r"\bbuild[- ]?unified[- ]?profile\b",
     ],
     "codex": [
-        r"\bcodex\b", r"\bcodex[- ]?hooks\b",
-        r"\bcodex[- ]?migration\b", r"\bcodex[- ]?prep\b",
+        r"\bcodex[- ]?hooks\b", r"\bcodex[- ]?migration\b", r"\bcodex[- ]?prep\b",
         r"\bcodex[- ]?cutover\b", r"\bgithooks\b",
     ],
     "claude-harness": [
-        r"\bclaude[- ]?code\b", r"\bclaude\.md\b", r"\bCLAUDE\.md\b",
-        r"\bsemantic[- ]?router\b", r"\bsettings\.json\b",
         r"\bskill[- ]?loader\b", r"\bbigd\b", r"\bdaemons?\b",
         r"\b/ship\b", r"\b/debug\b", r"\b/recall\b", r"\b/snap\b",
         r"\bUserPromptSubmit\b", r"\bPreToolUse\b", r"\bPostToolUse\b",
@@ -56,23 +54,33 @@ CUBE_KEYWORDS: Final[dict[str, list[str]]] = {
     ],
 }
 
-# Compiled once at import time (regex objects keyed by cube)
-_COMPILED: dict[str, list[re.Pattern[str]]] = {
-    cube: [re.compile(p, re.IGNORECASE) for p in patterns]
-    for cube, patterns in CUBE_KEYWORDS.items()
+ANCHOR_WEIGHT: Final[int] = 2
+CONTEXT_WEIGHT: Final[int] = 1
+MIN_SCORE_TO_WIN: Final[int] = 1  # ≥1 context hit OR ≥1 anchor hit escapes "general"
+
+_ANCHOR_RE: dict[str, list[re.Pattern[str]]] = {
+    c: [re.compile(p, re.IGNORECASE) for p in pats] for c, pats in CUBE_ANCHORS.items()
+}
+_CONTEXT_RE: dict[str, list[re.Pattern[str]]] = {
+    c: [re.compile(p, re.IGNORECASE) for p in pats] for c, pats in CUBE_CONTEXT.items()
 }
 
-MIN_SCORE_TO_WIN = 1  # need ≥1 hit to escape "general"
+# Public alias kept for back-compat with anyone reading CUBE_KEYWORDS
+CUBE_KEYWORDS: Final[dict[str, list[str]]] = {
+    c: CUBE_ANCHORS[c] + CUBE_CONTEXT[c] for c in CUBE_ANCHORS
+}
 
 
 def score(prompt: str) -> dict[str, int]:
-    """Return per-cube hit counts for the given prompt."""
+    """Per-cube weighted hit count. Anchor=2, context=1."""
     if not prompt:
-        return {cube: 0 for cube in CUBE_KEYWORDS}
-    return {
-        cube: sum(1 for p in patterns if p.search(prompt))
-        for cube, patterns in _COMPILED.items()
-    }
+        return {cube: 0 for cube in CUBE_ANCHORS}
+    out: dict[str, int] = {}
+    for cube in CUBE_ANCHORS:
+        a = sum(ANCHOR_WEIGHT for p in _ANCHOR_RE[cube] if p.search(prompt))
+        c = sum(CONTEXT_WEIGHT for p in _CONTEXT_RE[cube] if p.search(prompt))
+        out[cube] = a + c
+    return out
 
 
 def classify(prompt: str) -> str:
